@@ -15,6 +15,9 @@ const path = require("path");
 const fs = require("fs");
 const os = require("os");
 const crypto = require("crypto");
+const { spawn } = require("child_process");
+const { pipeline } = require("stream/promises");
+const { Readable } = require("stream");
 const nebulaAdblock = require("./adblock");
 
 function readNebulaPackageJson() {
@@ -261,6 +264,64 @@ async function fetchLatestGithubRelease(repoKey) {
   return { version: ver, htmlUrl, body, installerUrl, portableUrl };
 }
 
+/**
+ * Only allow direct GitHub release asset EXE URLs (not portable) so the renderer cannot
+ * trigger arbitrary downloads.
+ * @param {string} url
+ */
+function isTrustedGithubInstallerAssetUrl(url) {
+  try {
+    const u = new URL(url);
+    if (u.protocol !== "https:") return false;
+    if (u.hostname.toLowerCase() !== "github.com") return false;
+    if (!/\/releases\/download\//i.test(u.pathname)) return false;
+    const seg = decodeURIComponent(u.pathname.split("/").pop() || "");
+    if (!seg.toLowerCase().endsWith(".exe")) return false;
+    if (/portable/i.test(seg)) return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * @param {string} url
+ * @param {string} destPath
+ */
+async function streamDownloadToFile(url, destPath) {
+  const res = await fetch(url, {
+    redirect: "follow",
+    headers: {
+      Accept: "application/octet-stream",
+      "User-Agent": "NebulaBrowser/Update",
+    },
+  });
+  if (!res.ok) throw new Error(`Download failed (HTTP ${res.status})`);
+  const body = res.body;
+  if (!body) throw new Error("Empty download body");
+  const ws = fs.createWriteStream(destPath);
+  await pipeline(Readable.fromWeb(body), ws);
+}
+
+/**
+ * @param {string} exePath
+ */
+function runDetachedWindowsInstaller(exePath) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(exePath, ["/S"], {
+      detached: true,
+      stdio: "ignore",
+      windowsHide: false,
+      shell: false,
+    });
+    child.on("error", reject);
+    child.on("spawn", () => {
+      child.unref();
+      resolve(undefined);
+    });
+  });
+}
+
 function ensureGuestCapturePoll() {
   if (guestCapturePollTimer != null) return;
   guestCapturePollTimer = setInterval(() => {
@@ -460,7 +521,7 @@ ipcMain.handle("nebula-prompt-update-install-choice", async (event, payload) => 
     title: "Update Nebula",
     message: `Version ${lat} is available (you have ${cur}).`,
     detail:
-      "Installer: run the setup to upgrade an installed Nebula (replaces the old version).\n\nPortable: download a standalone .exe you can run without replacing your current install.\n\nIf a download type is missing on the release, you will open the release page and pick the file under Assets.",
+      "Installer: on a normal Windows install, you can download and run the updater automatically after this dialog.\n\nPortable: open a standalone .exe so you can run the new build without replacing your current install.\n\nIf a download type is missing on the release, open the release page and pick the file under Assets.",
     buttons: ["Installer (replace / upgrade)", "Portable (keep old install)", "Not now"],
     defaultId: 0,
     cancelId: 2,
@@ -468,14 +529,85 @@ ipcMain.handle("nebula-prompt-update-install-choice", async (event, payload) => 
   });
 
   if (response === 0) {
-    if (instTarget) await shell.openExternal(instTarget);
-    return { ok: true, choice: "installer" };
+    return {
+      ok: true,
+      choice: "installer",
+      installerUrl: instTarget,
+      portableUrl: portTarget,
+      releaseUrl,
+    };
   }
   if (response === 1) {
-    if (portTarget) await shell.openExternal(portTarget);
-    return { ok: true, choice: "portable" };
+    return {
+      ok: true,
+      choice: "portable",
+      installerUrl: instTarget,
+      portableUrl: portTarget,
+      releaseUrl,
+    };
   }
   return { ok: true, choice: "cancel" };
+});
+
+ipcMain.handle("nebula-start-windows-installer-update", async (event, payload) => {
+  const p = payload && typeof payload === "object" ? payload : {};
+  const url = typeof p.url === "string" ? p.url.trim() : "";
+  if (!url || !isTrustedGithubInstallerAssetUrl(url)) {
+    return { ok: false, reason: "bad-url" };
+  }
+  if (process.platform !== "win32" || !app.isPackaged) {
+    return { ok: false, reason: "unsupported" };
+  }
+
+  const win = BrowserWindow.fromWebContents(event.sender);
+  const parent = win && !win.isDestroyed() ? win : BrowserWindow.getFocusedWindow();
+
+  const { response } = await dialog.showMessageBox(parent || undefined, {
+    type: "warning",
+    title: "Install update",
+    message: "Nebula will download the update, quit, and run the Windows installer.",
+    detail:
+      "The installer usually runs silently (/S). If nothing seems to happen, check the release page and run the installer manually. You may be prompted by Windows (UAC).",
+    buttons: ["Continue", "Cancel"],
+    defaultId: 0,
+    cancelId: 1,
+    noLink: true,
+  });
+  if (response !== 0) return { ok: false, cancelled: true };
+
+  const dest = path.join(app.getPath("temp"), `NebulaUpdate-${Date.now()}.exe`);
+  try {
+    await streamDownloadToFile(url, dest);
+  } catch (err) {
+    dialog.showErrorBox("Update download failed", String(err?.message || err));
+    try {
+      fs.unlinkSync(dest);
+    } catch {
+      /* */
+    }
+    return { ok: false, reason: String(err?.message || err) };
+  }
+
+  try {
+    await runDetachedWindowsInstaller(dest);
+  } catch (err) {
+    dialog.showErrorBox("Could not start installer", String(err?.message || err));
+    try {
+      fs.unlinkSync(dest);
+    } catch {
+      /* */
+    }
+    return { ok: false, reason: String(err?.message || err) };
+  }
+
+  setTimeout(() => {
+    try {
+      app.quit();
+    } catch {
+      /* */
+    }
+  }, 450);
+  return { ok: true };
 });
 
 ipcMain.handle("nebula-get-update-info", () => ({

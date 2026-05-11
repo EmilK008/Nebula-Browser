@@ -1,6 +1,13 @@
 {
   "entries": [
     {
+      "version": "0.5.2",
+      "date": "2026-05-11",
+      "added": [
+        "Windows packaged updates: choosing Installer can download the NSIS setup from GitHub, quit Nebula, and launch the installer with silent mode (/S) so the existing install is upgraded without opening the browser first (falls back to opening the release or installer URL if auto-update is not available)"
+      ]
+    },
+    {
       "version": "0.5.1",
       "date": "2026-05-11",
       "added": [

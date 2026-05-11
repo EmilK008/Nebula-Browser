@@ -3020,7 +3020,32 @@
           portableUrl: typeof r.portableUrl === "string" ? r.portableUrl : "",
           releaseUrl: typeof r.releaseUrl === "string" ? r.releaseUrl : "",
         });
-        if (res?.choice === "cancel") showUpdateBanner(r);
+        if (res?.choice === "cancel") {
+          showUpdateBanner(r);
+          return;
+        }
+        const releaseUrl = typeof res.releaseUrl === "string" ? res.releaseUrl.trim() : "";
+        if (res.choice === "portable") {
+          const u = (typeof res.portableUrl === "string" ? res.portableUrl.trim() : "") || releaseUrl;
+          if (u && window.nebula?.openExternalUrl) void window.nebula.openExternalUrl(u);
+          return;
+        }
+        if (res.choice === "installer") {
+          const inst = typeof res.installerUrl === "string" ? res.installerUrl.trim() : "";
+          if (inst && window.nebula?.startWindowsInstallerUpdate) {
+            const r2 = await window.nebula.startWindowsInstallerUpdate({ url: inst });
+            if (r2?.ok) return;
+            if (r2?.cancelled) {
+              if (releaseUrl && window.nebula?.openExternalUrl) void window.nebula.openExternalUrl(releaseUrl);
+              return;
+            }
+            const fallback = inst || releaseUrl;
+            if (fallback && window.nebula?.openExternalUrl) void window.nebula.openExternalUrl(fallback);
+            return;
+          }
+          const open = inst || releaseUrl;
+          if (open && window.nebula?.openExternalUrl) void window.nebula.openExternalUrl(open);
+        }
         return;
       }
     } catch {

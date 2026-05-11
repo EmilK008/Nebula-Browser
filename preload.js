@@ -165,9 +165,12 @@ contextBridge.exposeInMainWorld("nebula", {
   checkForUpdates: () => ipcRenderer.invoke("nebula-check-for-updates"),
   getUpdateInfo: () => ipcRenderer.invoke("nebula-get-update-info"),
   openExternalUrl: (url) => ipcRenderer.invoke("nebula-open-external-url", { url }),
-  /** Native dialog: installer vs portable vs cancel; opens the chosen URL in the browser. */
+  /** Native dialog: installer vs portable vs cancel; returns choice + URLs (renderer opens or runs installer). */
   promptUpdateInstallChoice: (payload) =>
     ipcRenderer.invoke("nebula-prompt-update-install-choice", payload ?? {}),
+  /** Windows packaged only: download NSIS installer from URL, run detached with /S, then quit app. */
+  startWindowsInstallerUpdate: (payload) =>
+    ipcRenderer.invoke("nebula-start-windows-installer-update", payload ?? {}),
   onTabMediaState: (handler) => {
     const ch = "nebula-tab-media";
     const fn = (_e, payload) => {
