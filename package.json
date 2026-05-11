@@ -1,0 +1,63 @@
+{
+  "name": "nebula-browser",
+  "version": "0.5.0",
+  "description": "A small Electron shell browser with a custom chrome",
+  "nebula": {
+    "updateRepo": ""
+  },
+  "main": "main.js",
+  "author": "Nebula",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "dist": "node scripts/dist-unpacked-guard.js && electron-builder --win",
+    "dist:dir": "node scripts/dist-unpacked-guard.js && electron-builder --win dir",
+    "changelog:date": "node scripts/changelog-date.js"
+  },
+  "dependencies": {
+    "@ghostery/adblocker-electron": "^2.14.3"
+  },
+  "devDependencies": {
+    "electron": "^34.0.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.nebula.browser",
+    "productName": "Nebula",
+    "copyright": "Copyright © Nebula",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "adblock.js",
+      "renderer/**/*",
+      "package.json"
+    ],
+    "asar": true,
+    "win": {
+      "signAndEditExecutable": false,
+      "signDlls": false,
+      "target": [
+        {
+          "target": "portable",
+          "arch": ["x64"]
+        },
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ],
+      "artifactName": "${productName}-${version}-${arch}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true
+    },
+    "portable": {
+      "artifactName": "${productName}-${version}-Portable.${ext}"
+    }
+  }
+}

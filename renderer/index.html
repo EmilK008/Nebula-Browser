@@ -1,0 +1,687 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self' https: http: data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data: blob: https: http: file:; font-src 'self' data:; connect-src https: http: ws: wss:; frame-src https: http: data: blob: file:;"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Nebula</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="chrome" id="drag-region">
+      <div id="update-banner" class="update-banner" hidden role="status">
+        <span id="update-banner-text" class="update-banner-text"></span>
+        <button type="button" class="settings-save-btn" id="update-banner-download">Download</button>
+        <button type="button" class="icon-btn update-banner-dismiss" id="update-banner-dismiss" title="Dismiss" aria-label="Dismiss">
+          ✕
+        </button>
+      </div>
+      <div class="chrome-row">
+        <nav class="nav-cluster" id="no-drag">
+          <button type="button" class="icon-btn" id="btn-back" title="Back" aria-label="Back">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M15 18l-6-6 6-6" />
+            </svg>
+          </button>
+          <button type="button" class="icon-btn" id="btn-forward" title="Forward" aria-label="Forward">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M9 18l6-6-6-6" />
+            </svg>
+          </button>
+          <button type="button" class="icon-btn" id="btn-reload" title="Reload" aria-label="Reload">
+            <svg class="reload-svg reload-svg-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <path d="M23 4v6h-6M1 20v-6h6" />
+              <path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15" />
+            </svg>
+            <svg class="reload-svg stop-svg-icon" width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <rect x="5" y="5" width="14" height="14" rx="2" />
+            </svg>
+          </button>
+          <button type="button" class="icon-btn" id="btn-home" title="Home" aria-label="Home">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z" />
+              <path d="M9 22V12h6v10" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            class="icon-btn bookmark-star"
+            id="btn-bookmark"
+            title="Bookmark this page (Ctrl+D)"
+            aria-label="Bookmark this page"
+            aria-pressed="false"
+          >
+            <svg class="star-outline" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+            </svg>
+            <svg class="star-filled" width="18" height="18" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2">
+              <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+            </svg>
+          </button>
+          <button type="button" class="icon-btn" id="btn-site-perm" title="Site permissions" aria-label="Site permissions">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+            </svg>
+          </button>
+        </nav>
+        <form class="omnibox-wrap" id="no-drag">
+          <div class="omnibox">
+            <span class="omnibox-glow" aria-hidden="true"></span>
+            <input
+              type="text"
+              id="url-input"
+              class="omnibox-input"
+              placeholder="Search or enter address"
+              spellcheck="false"
+              autocomplete="off"
+              role="combobox"
+              aria-autocomplete="list"
+              aria-expanded="false"
+              aria-controls="omnibox-suggestions"
+            />
+            <button type="submit" class="go-btn" id="btn-go" title="Go">Go</button>
+          </div>
+          <ul
+            id="omnibox-suggestions"
+            class="omnibox-suggestions"
+            hidden
+            role="listbox"
+            aria-label="Suggestions"
+          ></ul>
+        </form>
+        <div class="nav-cluster right" id="no-drag">
+          <button type="button" class="icon-btn" id="btn-exit-split" title="Exit split view" aria-label="Exit split view" hidden>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <rect x="4" y="5" width="7" height="14" rx="1.5" />
+              <rect x="13" y="5" width="7" height="14" rx="1.5" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            class="zoom-reset-btn"
+            id="btn-zoom-reset"
+            title="Reset zoom (Ctrl+0)"
+            aria-label="Reset zoom to 100 percent"
+          >
+            100%
+          </button>
+          <button type="button" class="icon-btn" id="btn-settings" title="Settings (Ctrl+,)" aria-label="Settings">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <circle cx="12" cy="12" r="3" />
+              <path
+                d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"
+              />
+            </svg>
+          </button>
+          <button type="button" class="icon-btn accent" id="btn-new-tab" title="New tab" aria-label="New tab">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M12 5v14M5 12h14" />
+            </svg>
+          </button>
+        </div>
+      </div>
+      <div class="bookmarks-bar" id="bookmarks-bar" hidden></div>
+      <div class="tabs-row" id="no-drag">
+        <div class="tabs-strip" id="tabs-strip">
+          <button
+            type="button"
+            class="icon-btn accent tabs-new-btn"
+            id="btn-new-tab-strip"
+            title="New tab"
+            aria-label="New tab"
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <path d="M12 5v14M5 12h14" />
+            </svg>
+          </button>
+        </div>
+      </div>
+    </header>
+    <main class="content no-drag">
+      <div id="webview-stack"></div>
+      <div id="split-drop-zones" class="split-drop-zones" hidden aria-hidden="true">
+        <div class="split-drop split-drop--left" data-split-drop="left">Split left</div>
+        <div class="split-drop split-drop--right" data-split-drop="right">Split right</div>
+      </div>
+      <div id="split-resizer" class="split-resizer" hidden aria-hidden="true" role="separator" aria-orientation="vertical" title="Drag to resize panes"></div>
+      <div id="session-restore-panel" class="session-restore-panel" hidden aria-hidden="true">
+        <div class="session-restore-backdrop" id="session-restore-backdrop" aria-hidden="true"></div>
+        <div
+          class="session-restore-dialog"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="session-restore-title"
+        >
+          <h2 id="session-restore-title" class="session-restore-title">Restore previous session?</h2>
+          <p id="session-restore-desc" class="settings-hint session-restore-desc">
+            Nebula can reopen the tabs from your last browsing session.
+          </p>
+          <div class="session-restore-actions">
+            <button type="button" class="settings-save-btn session-restore-primary" id="session-restore-yes">
+              Restore tabs
+            </button>
+            <button type="button" class="settings-action-btn" id="session-restore-no">Start fresh</button>
+          </div>
+        </div>
+      </div>
+      <div id="changelog-panel" class="changelog-panel" hidden aria-hidden="true">
+        <div class="changelog-panel-backdrop" id="changelog-panel-backdrop" aria-hidden="true"></div>
+        <div
+          class="changelog-panel-dialog"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="changelog-panel-title"
+        >
+          <div class="changelog-panel-header">
+            <h2 id="changelog-panel-title" class="changelog-panel-title">Update log</h2>
+            <button
+              type="button"
+              class="changelog-panel-close"
+              id="changelog-panel-close"
+              title="Close"
+              aria-label="Close update log"
+            >
+              ✕
+            </button>
+          </div>
+          <div id="changelog-panel-body" class="changelog-panel-body"></div>
+        </div>
+      </div>
+      <div id="permission-prompt-panel" class="permission-prompt-panel" hidden aria-hidden="true">
+        <div class="permission-prompt-backdrop" id="permission-prompt-backdrop" aria-hidden="true"></div>
+        <div
+          class="permission-prompt-dialog"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="permission-prompt-title"
+        >
+          <h2 id="permission-prompt-title" class="permission-prompt-title">Permission request</h2>
+          <p id="permission-prompt-message" class="permission-prompt-message"></p>
+          <label class="settings-checkbox-row permission-prompt-remember-row">
+            <input type="checkbox" id="permission-prompt-remember" checked />
+            <span>Remember for this site</span>
+          </label>
+          <div class="permission-prompt-actions">
+            <button type="button" class="settings-action-btn" id="permission-prompt-block">Block</button>
+            <button type="button" class="settings-save-btn" id="permission-prompt-allow">Allow</button>
+          </div>
+        </div>
+      </div>
+      <div id="password-save-offer-panel" class="password-save-offer-panel" hidden aria-hidden="true">
+        <div class="password-save-offer-backdrop" id="password-save-offer-backdrop" aria-hidden="true"></div>
+        <div
+          class="permission-prompt-dialog password-save-offer-dialog"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="password-save-offer-title"
+        >
+          <h2 id="password-save-offer-title" class="permission-prompt-title">Save password?</h2>
+          <p id="password-save-offer-message" class="permission-prompt-message"></p>
+          <div class="permission-prompt-actions password-save-offer-actions">
+            <button type="button" class="settings-action-btn" id="password-save-offer-never">Never for this site</button>
+            <button type="button" class="settings-action-btn" id="password-save-offer-dismiss">Not now</button>
+            <button type="button" class="settings-save-btn" id="password-save-offer-save">Save</button>
+          </div>
+        </div>
+      </div>
+      <div id="vault-panel" class="vault-panel" hidden aria-hidden="true">
+        <div class="vault-panel-backdrop" id="vault-panel-backdrop" aria-hidden="true"></div>
+        <div class="vault-panel-dialog" role="dialog" aria-modal="true" aria-labelledby="vault-panel-title">
+          <div class="vault-panel-header">
+            <h2 id="vault-panel-title" class="vault-panel-title">Saved passwords</h2>
+            <button type="button" class="vault-panel-close" id="vault-panel-close" title="Close" aria-label="Close saved passwords">
+              ✕
+            </button>
+          </div>
+          <div class="vault-panel-body">
+            <div class="vault-panel-toolbar">
+              <input
+                type="search"
+                id="vault-search"
+                class="vault-search-input"
+                placeholder="Search…"
+                autocomplete="off"
+                aria-label="Search saved passwords"
+              />
+              <button type="button" class="settings-action-btn vault-toolbar-lock" id="vault-lock-btn" hidden title="Lock vault">
+                Lock
+              </button>
+              <button type="button" class="settings-save-btn vault-toolbar-add" id="vault-add-toggle">Add entry</button>
+            </div>
+            <div class="vault-toolbar-secondary">
+              <label class="vault-filter-label">
+                <span class="vault-filter-text">Show</span>
+                <select id="vault-filter" class="vault-filter-select" aria-label="Filter vault entries">
+                  <option value="all">All</option>
+                  <option value="login">Saved logins</option>
+                  <option value="session">Session only</option>
+                  <option value="password">With password</option>
+                </select>
+              </label>
+              <span class="vault-toolbar-secondary-spacer"></span>
+              <label class="vault-export-opt-label" title="Uncheck to export usernames and URLs only (password fields empty)">
+                <input type="checkbox" id="vault-export-include-passwords" checked />
+                <span>Passwords in export</span>
+              </label>
+              <button type="button" class="settings-action-btn" id="vault-export-btn" title="Save vault as JSON (see checkbox for full vs outline)">
+                Export…
+              </button>
+              <label class="vault-filter-label vault-import-mode-wrap">
+                <span class="vault-filter-text">Import</span>
+                <select id="vault-import-mode" class="vault-filter-select" aria-label="Import mode">
+                  <option value="merge">Merge (skip duplicates)</option>
+                  <option value="replace">Replace entire vault…</option>
+                </select>
+              </label>
+              <button type="button" class="settings-action-btn" id="vault-import-btn" title="Pick a Nebula vault JSON file">
+                Import…
+              </button>
+            </div>
+          <div id="vault-form-wrap" class="vault-form-wrap" hidden>
+            <input type="hidden" id="vault-edit-id" value="" />
+            <label class="vault-field">
+              <span class="vault-field-label">Website URL</span>
+              <input type="text" id="vault-field-url" class="vault-field-input" placeholder="https://example.com/login" autocomplete="off" />
+            </label>
+            <label class="vault-field">
+              <span class="vault-field-label">Title (optional)</span>
+              <input type="text" id="vault-field-title" class="vault-field-input" placeholder="Example" autocomplete="off" />
+            </label>
+            <label class="vault-field">
+              <span class="vault-field-label">Username</span>
+              <input type="text" id="vault-field-user" class="vault-field-input" autocomplete="off" />
+            </label>
+            <label class="vault-field">
+              <span class="vault-field-label">Password</span>
+              <input type="password" id="vault-field-pass" class="vault-field-input" autocomplete="new-password" />
+            </label>
+            <label class="vault-field">
+              <span class="vault-field-label">Notes (optional)</span>
+              <textarea id="vault-field-notes" class="vault-field-textarea" rows="2" placeholder=""></textarea>
+            </label>
+            <div class="vault-form-actions">
+              <button type="button" class="settings-action-btn" id="vault-form-cancel">Cancel</button>
+              <button type="button" class="settings-save-btn" id="vault-form-save">Save</button>
+            </div>
+          </div>
+          <p id="vault-hint-encryption" class="settings-hint vault-hint"></p>
+          <div class="vault-list-wrap">
+            <div id="vault-unlock-overlay" class="vault-unlock-overlay" hidden aria-hidden="true">
+              <div class="vault-unlock-card">
+                <p class="vault-unlock-title">Unlock saved passwords</p>
+                <p class="vault-unlock-desc">
+                  Enter your local Nebula account password to view, edit, or copy stored passwords.
+                </p>
+                <label class="vault-field">
+                  <span class="vault-field-label">Password</span>
+                  <input
+                    type="password"
+                    id="vault-unlock-pass"
+                    class="vault-field-input"
+                    autocomplete="off"
+                    aria-label="Nebula account password"
+                  />
+                </label>
+                <p id="vault-unlock-error" class="vault-unlock-error" hidden role="alert"></p>
+                <button type="button" class="settings-save-btn vault-unlock-submit" id="vault-unlock-submit">
+                  Unlock
+                </button>
+              </div>
+            </div>
+            <ul id="vault-list" class="vault-list"></ul>
+          </div>
+          </div>
+        </div>
+      </div>
+      <div id="history-panel" class="history-panel" hidden aria-hidden="true">
+        <div class="history-panel-backdrop" id="history-panel-backdrop" aria-hidden="true"></div>
+        <div
+          class="history-panel-dialog"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="history-panel-title"
+        >
+          <div class="history-panel-header">
+            <h2 id="history-panel-title" class="history-panel-title">History</h2>
+            <button type="button" class="history-panel-close" id="history-panel-close" title="Close" aria-label="Close history">
+              ✕
+            </button>
+          </div>
+          <div class="history-panel-toolbar">
+            <button type="button" class="history-clear-btn" id="history-clear">Clear all</button>
+          </div>
+          <ul id="history-list" class="history-list"></ul>
+        </div>
+      </div>
+      <div id="site-perm-panel" class="site-perm-panel" hidden aria-hidden="true">
+        <div class="site-perm-panel-backdrop" id="site-perm-backdrop" aria-hidden="true"></div>
+        <div
+          class="site-perm-panel-dialog"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="site-perm-title"
+        >
+          <div class="site-perm-panel-header">
+            <h2 id="site-perm-title" class="site-perm-panel-title">Site permissions</h2>
+            <button type="button" class="site-perm-panel-close" id="site-perm-close" title="Close" aria-label="Close site permissions">
+              ✕
+            </button>
+          </div>
+          <div class="site-perm-body">
+            <p id="site-perm-origin" class="site-perm-origin" aria-live="polite">—</p>
+            <label class="settings-checkbox-row site-perm-global-row">
+              <input type="checkbox" id="site-perm-global-3p" />
+              <span>Block third-party cookies for all sites</span>
+            </label>
+            <p class="settings-hint site-perm-hint">
+              When on, only the site in the address bar gets cookies; other origins on the page do not (simple same-origin check). Per-site options below can loosen or tighten that.
+            </p>
+            <hr class="site-perm-divider" />
+            <h3 class="site-perm-subtitle">App defaults</h3>
+            <p class="settings-hint site-perm-hint">
+              Used for sites you haven’t customized yet. “Ask” shows a prompt when the site requests access (camera, microphone, location, etc.).
+            </p>
+            <div class="site-perm-defaults-grid">
+              <label class="site-perm-row">
+                <span class="site-perm-label">Camera</span>
+                <select id="site-perm-def-camera" class="settings-select site-perm-default-select" data-default-key="camera">
+                  <option value="ask">Ask</option>
+                  <option value="allow">Allow</option>
+                  <option value="block">Block</option>
+                </select>
+              </label>
+              <label class="site-perm-row">
+                <span class="site-perm-label">Microphone</span>
+                <select id="site-perm-def-microphone" class="settings-select site-perm-default-select" data-default-key="microphone">
+                  <option value="ask">Ask</option>
+                  <option value="allow">Allow</option>
+                  <option value="block">Block</option>
+                </select>
+              </label>
+              <label class="site-perm-row">
+                <span class="site-perm-label">Location</span>
+                <select id="site-perm-def-geolocation" class="settings-select site-perm-default-select" data-default-key="geolocation">
+                  <option value="ask">Ask</option>
+                  <option value="allow">Allow</option>
+                  <option value="block">Block</option>
+                </select>
+              </label>
+              <label class="site-perm-row">
+                <span class="site-perm-label">Notifications</span>
+                <select id="site-perm-def-notifications" class="settings-select site-perm-default-select" data-default-key="notifications">
+                  <option value="ask">Ask</option>
+                  <option value="allow">Allow</option>
+                  <option value="block">Block</option>
+                </select>
+              </label>
+              <label class="site-perm-row">
+                <span class="site-perm-label">Screen capture</span>
+                <select id="site-perm-def-screenCapture" class="settings-select site-perm-default-select" data-default-key="screenCapture">
+                  <option value="ask">Ask</option>
+                  <option value="allow">Allow</option>
+                  <option value="block">Block</option>
+                </select>
+              </label>
+            </div>
+            <hr class="site-perm-divider" />
+            <h3 class="site-perm-subtitle">This page</h3>
+            <div id="site-perm-site-wrap" class="site-perm-site-wrap" hidden>
+              <label class="site-perm-row">
+                <span class="site-perm-label">Camera</span>
+                <select id="site-perm-camera" class="settings-select site-perm-select" data-perm-key="camera">
+                  <option value="default">Use app default</option>
+                  <option value="ask">Ask every time</option>
+                  <option value="allow">Allow</option>
+                  <option value="block">Block</option>
+                </select>
+              </label>
+              <label class="site-perm-row">
+                <span class="site-perm-label">Microphone</span>
+                <select id="site-perm-microphone" class="settings-select site-perm-select" data-perm-key="microphone">
+                  <option value="default">Use app default</option>
+                  <option value="ask">Ask every time</option>
+                  <option value="allow">Allow</option>
+                  <option value="block">Block</option>
+                </select>
+              </label>
+              <label class="site-perm-row">
+                <span class="site-perm-label">Location</span>
+                <select id="site-perm-geolocation" class="settings-select site-perm-select" data-perm-key="geolocation">
+                  <option value="default">Use app default</option>
+                  <option value="ask">Ask every time</option>
+                  <option value="allow">Allow</option>
+                  <option value="block">Block</option>
+                </select>
+              </label>
+              <label class="site-perm-row">
+                <span class="site-perm-label">Notifications</span>
+                <select id="site-perm-notifications" class="settings-select site-perm-select" data-perm-key="notifications">
+                  <option value="default">Use app default</option>
+                  <option value="ask">Ask every time</option>
+                  <option value="allow">Allow</option>
+                  <option value="block">Block</option>
+                </select>
+              </label>
+              <label class="site-perm-row">
+                <span class="site-perm-label">Screen capture</span>
+                <select id="site-perm-screen" class="settings-select site-perm-select" data-perm-key="screenCapture">
+                  <option value="default">Use app default</option>
+                  <option value="ask">Ask every time</option>
+                  <option value="allow">Allow</option>
+                  <option value="block">Block</option>
+                </select>
+              </label>
+              <label class="site-perm-row">
+                <span class="site-perm-label">Third-party cookies</span>
+                <select id="site-perm-3p" class="settings-select site-perm-select" data-perm-key="thirdPartyCookies">
+                  <option value="default">Follow global setting above</option>
+                  <option value="allow">Always allow for embeds</option>
+                  <option value="block">Always block on this site</option>
+                </select>
+              </label>
+            </div>
+            <p id="site-perm-no-page" class="site-perm-no-page" hidden>Open an https page to set permissions for that site.</p>
+          </div>
+        </div>
+      </div>
+      <div id="settings-panel" class="settings-panel" hidden aria-hidden="true">
+        <div class="settings-panel-backdrop" id="settings-panel-backdrop" aria-hidden="true"></div>
+        <div class="settings-panel-dialog" role="dialog" aria-modal="true" aria-labelledby="settings-panel-title">
+          <div class="settings-panel-header">
+            <h2 id="settings-panel-title" class="settings-panel-title">Settings</h2>
+            <button type="button" class="settings-panel-close" id="settings-panel-close" title="Close" aria-label="Close settings">
+              ✕
+            </button>
+          </div>
+          <div class="settings-panel-body">
+            <section class="settings-section">
+              <h3 class="settings-section-title">Ad blocker</h3>
+              <label class="settings-checkbox-row">
+                <input type="checkbox" id="settings-adblock-enabled" />
+                <span>Block ads &amp; trackers (EasyList-style rules in tabs)</span>
+              </label>
+              <p class="settings-hint">
+                Some streaming or video sites expect ads or anti-adblock scripts. If playback fails, turn this off in Settings while you watch, then turn it back on.
+              </p>
+            </section>
+            <section class="settings-section">
+              <h3 class="settings-section-title">Address bar suggestions</h3>
+              <p class="settings-hint">Control what appears when you type in the address bar.</p>
+              <label class="settings-checkbox-row">
+                <input type="checkbox" id="settings-ss-past" />
+                <span>Past DuckDuckGo searches</span>
+              </label>
+              <label class="settings-checkbox-row">
+                <input type="checkbox" id="settings-ss-bookmarks" />
+                <span>Bookmarks</span>
+              </label>
+              <label class="settings-checkbox-row">
+                <input type="checkbox" id="settings-ss-history" />
+                <span>History pages</span>
+              </label>
+              <label class="settings-checkbox-row">
+                <input type="checkbox" id="settings-ss-ddg" />
+                <span>DuckDuckGo live completions</span>
+              </label>
+              <label class="settings-field">
+                <span class="settings-label">Suggestion order</span>
+                <select id="settings-ss-layer-order" class="settings-select">
+                  <option value='["past","local","remote"]'>Past searches → Bookmarks &amp; history → DuckDuckGo</option>
+                  <option value='["past","remote","local"]'>Past searches → DuckDuckGo → Bookmarks &amp; history</option>
+                  <option value='["local","past","remote"]'>Bookmarks &amp; history → Past searches → DuckDuckGo</option>
+                  <option value='["local","remote","past"]'>Bookmarks &amp; history → DuckDuckGo → Past searches</option>
+                  <option value='["remote","past","local"]'>DuckDuckGo → Past searches → Bookmarks &amp; history</option>
+                  <option value='["remote","local","past"]'>DuckDuckGo → Bookmarks &amp; history → Past searches</option>
+                </select>
+              </label>
+              <div class="settings-grid">
+                <label class="settings-field">
+                  <span class="settings-label">Max total</span>
+                  <input type="number" id="settings-ss-max-total" class="settings-input-num" min="3" max="25" />
+                </label>
+                <label class="settings-field">
+                  <span class="settings-label">Max past searches</span>
+                  <input type="number" id="settings-ss-max-past" class="settings-input-num" min="0" max="15" />
+                </label>
+                <label class="settings-field">
+                  <span class="settings-label">Max bookmarks</span>
+                  <input type="number" id="settings-ss-max-bookmarks" class="settings-input-num" min="0" max="15" />
+                </label>
+                <label class="settings-field">
+                  <span class="settings-label">Max history</span>
+                  <input type="number" id="settings-ss-max-history" class="settings-input-num" min="0" max="15" />
+                </label>
+                <label class="settings-field">
+                  <span class="settings-label">Max DuckDuckGo</span>
+                  <input type="number" id="settings-ss-max-ddg" class="settings-input-num" min="0" max="15" />
+                </label>
+                <label class="settings-field">
+                  <span class="settings-label">Min chars for DDG</span>
+                  <input type="number" id="settings-ss-remote-min" class="settings-input-num" min="1" max="6" />
+                </label>
+                <label class="settings-field">
+                  <span class="settings-label">Debounce (ms)</span>
+                  <input type="number" id="settings-ss-debounce" class="settings-input-num" min="80" max="800" step="10" />
+                </label>
+              </div>
+            </section>
+            <section class="settings-section">
+              <h3 class="settings-section-title">Bookmarks</h3>
+              <p class="settings-hint">
+                Choose where to import from—Chrome is read automatically from this PC. Use “Bookmark file” for an HTML/JSON export or other browsers.
+              </p>
+              <label class="settings-field">
+                <span class="settings-label">Import from</span>
+                <select id="settings-bookmarks-import-source" class="settings-select">
+                  <option value="chrome">Google Chrome (this PC)</option>
+                  <option value="file">Bookmark file (HTML or JSON)…</option>
+                </select>
+              </label>
+              <div class="settings-bookmarks-row">
+                <button type="button" class="settings-action-btn" id="settings-bookmarks-import-merge">
+                  Import (add new)
+                </button>
+                <button type="button" class="settings-action-btn" id="settings-bookmarks-import-replace">
+                  Import (replace all)
+                </button>
+                <button type="button" class="settings-action-btn" id="settings-bookmarks-export-html">Export HTML…</button>
+                <button type="button" class="settings-action-btn" id="settings-bookmarks-export-json">Export JSON…</button>
+              </div>
+            </section>
+            <section class="settings-section">
+              <h3 class="settings-section-title">Privacy</h3>
+              <p class="settings-hint">
+                Saved passwords are stored only on this device. Use View → Saved passwords or the button below. Nebula can also
+                suggest a vault row when you are signed in via cookies but have no entry yet (password stays empty until you edit
+                it)—see View → Add this site to vault (session login). Removing a session row also clears that site’s cookies and data on this device (you are signed out there).
+              </p>
+              <p class="settings-about-actions">
+                <button type="button" class="settings-action-btn" id="settings-open-vault">Saved passwords…</button>
+              </p>
+              <p class="settings-subsection-label">Local Nebula account</p>
+              <p class="settings-hint">
+                Optional master password on this device. Until you unlock, saved passwords stay hidden and cannot be copied or edited
+                (you can still add new entries or remove rows). Unlock lasts about 15 minutes, then locks again.
+              </p>
+              <div id="nebula-account-create-block" class="nebula-account-block">
+                <label class="settings-field">
+                  <span class="settings-label">New password</span>
+                  <input type="password" id="nebula-account-new-pass" class="settings-input" autocomplete="new-password" />
+                </label>
+                <label class="settings-field">
+                  <span class="settings-label">Confirm</span>
+                  <input type="password" id="nebula-account-confirm-pass" class="settings-input" autocomplete="new-password" />
+                </label>
+                <button type="button" class="settings-save-btn" id="nebula-account-create-btn">Create account</button>
+              </div>
+              <div id="nebula-account-manage-block" class="nebula-account-block" hidden>
+                <p class="settings-about-actions">
+                  <button type="button" class="settings-action-btn" id="nebula-account-lock-now-btn">Lock vault now</button>
+                </p>
+                <label class="settings-field">
+                  <span class="settings-label">Current password</span>
+                  <input type="password" id="nebula-account-current-pass" class="settings-input" autocomplete="current-password" />
+                </label>
+                <label class="settings-field">
+                  <span class="settings-label">New password</span>
+                  <input type="password" id="nebula-account-change-new-pass" class="settings-input" autocomplete="new-password" />
+                </label>
+                <div class="settings-bookmarks-row">
+                  <button type="button" class="settings-save-btn" id="nebula-account-change-btn">Change password</button>
+                  <button type="button" class="settings-action-btn" id="nebula-account-remove-btn">Remove account…</button>
+                </div>
+              </div>
+              <p id="nebula-account-settings-msg" class="settings-hint" role="status"></p>
+            </section>
+            <section class="settings-section">
+              <h3 class="settings-section-title">About</h3>
+              <p class="settings-about-line">
+                <strong id="settings-about-name">Nebula</strong>
+                <span class="settings-about-version-wrap">
+                  Version <span id="settings-about-version">—</span>
+                </span>
+              </p>
+              <p class="settings-about-actions">
+                <button type="button" class="settings-action-btn" id="settings-open-changelog">Update log…</button>
+                <button type="button" class="settings-action-btn" id="settings-check-updates">Check for updates…</button>
+              </p>
+              <p id="settings-update-hint" class="settings-hint" hidden></p>
+              <p class="settings-hint">
+                Bump <code class="settings-inline-code">version</code> in <code class="settings-inline-code">package.json</code> when you ship. In
+                <code class="settings-inline-code">renderer/changelog.json</code>, use optional arrays
+                <code class="settings-inline-code">added</code>, <code class="settings-inline-code">improvements</code>, and
+                <code class="settings-inline-code">fixes</code> (or a plain <code class="settings-inline-code">items</code> list for older-style notes).
+              </p>
+            </section>
+          </div>
+          <div class="settings-panel-footer">
+            <button type="button" class="settings-save-btn" id="settings-save">Save</button>
+          </div>
+        </div>
+      </div>
+      <div id="find-bar" class="find-bar" hidden role="search">
+        <span class="find-bar-label">Find</span>
+        <input
+          id="find-input"
+          class="find-input"
+          type="text"
+          placeholder="Type to search…"
+          spellcheck="false"
+          autocomplete="off"
+          aria-label="Find in page"
+        />
+        <span id="find-status" class="find-status" aria-live="polite"></span>
+        <button type="button" class="find-btn" id="find-prev" title="Previous (Shift+Enter)">↑</button>
+        <button type="button" class="find-btn" id="find-next" title="Next (Enter)">↓</button>
+        <button type="button" class="find-btn find-close" id="find-close" title="Close (Esc)">✕</button>
+      </div>
+    </main>
+    <aside id="downloads-dock" class="downloads-dock" hidden aria-label="Downloads"></aside>
+    <script src="youtube-ad-skip.js"></script>
+    <script src="bookmarks-io.js"></script>
+    <script src="renderer.js"></script>
+  </body>
+</html>

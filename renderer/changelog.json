@@ -1,0 +1,128 @@
+{
+  "entries": [
+    {
+      "version": "0.5.0",
+      "date": "2026-05-11",
+      "added": [
+        "Updates: optional GitHub release check (configure nebula.updateRepo or repository URL), banner when a newer release exists with Download and Dismiss, View → Check for updates, and a startup silent check",
+        "Tab media indicators: speaker when audio is playing or tab is muted (toggle mute), camera/microphone when capture is active (buttons attempt to stop tracks)"
+      ]
+    },
+    {
+      "version": "0.4.5",
+      "date": "2026-05-11",
+      "added": [
+        "Picture in picture: View → Picture in picture (Ctrl+Shift+P) or right‑click a video → Picture in picture — opens Chromium’s floating PiP window (move, resize; stays above the main window). Works across frames when possible."
+      ]
+    },
+    {
+      "version": "0.4.4",
+      "date": "2026-05-11",
+      "added": [
+        "Bookmarks bar: favicon per site (http/https) next to each chip, loaded like tab icons; hidden if the icon fails to load"
+      ]
+    },
+    {
+      "version": "0.4.3",
+      "date": "2026-05-11",
+      "fixes": [
+        "Address bar: search suggestions close when focus leaves the omnibox (e.g. clicking the page), and delayed DuckDuckGo results no longer reopen the list after you have moved away"
+      ]
+    },
+    {
+      "version": "0.4.2",
+      "date": "2026-05-11",
+      "fixes": [
+        "Keyboard focus: after OAuth or other guest popups close, Nebula refocuses the main window and active tab webview; dismissing the save-password or permission overlay also returns focus to the page",
+        "Save password prompt only appears on commit-style capture (submit, login click, Enter, blur, etc.), not on every keystroke in the password field"
+      ]
+    },
+    {
+      "version": "0.4.1",
+      "date": "2026-05-11",
+      "fixes": [
+        "Sign in with Google and similar OAuth flows: allow a real popup window (same browsing partition as tabs) instead of forcing the authorize URL into a new tab, which broke window.opener / postMessage handshakes"
+      ]
+    },
+    {
+      "version": "0.4.0",
+      "date": "2026-05-11",
+      "added": [
+        "Login capture runs as a session preload on the browsing partition so it also loads inside iframes (not only the top webview frame); duplicate webview preload removed",
+        "Conservative fetch hook: successful POST/PUT/PATCH to auth-like URLs may capture password/username from JSON or urlencoded bodies",
+        "Vault export: optional outline export without password strings (checkbox); JSON includes exportRedacted when applicable",
+        "Vault import: choose merge (skip duplicate origin+username) or replace entire vault, with a confirm dialog for the destructive path"
+      ],
+      "improvements": [
+        "Saved passwords hint suggests exporting a backup when you have several entries"
+      ]
+    },
+    {
+      "version": "0.3.1",
+      "date": "2026-05-11",
+      "fixes": [
+        "Vault export and import now require the same Nebula account unlock as viewing or editing passwords (export no longer bypassed the lock)"
+      ]
+    },
+    {
+      "version": "0.3.0",
+      "date": "2026-05-11",
+      "added": [
+        "Saved passwords: filter (all / saved logins / session only / with password), Session badge on rows, Export… and Import… (JSON merge by origin+username)",
+        "Login capture: longer delayed reads after submit/click, password field blur and debounced input, DOM watch for late-mounted fields, pagehide snapshot, autocomplete=username detection"
+      ]
+    },
+    {
+      "version": "0.2.4",
+      "date": "2026-05-11",
+      "fixes": [
+        "Session vault remove: use Electron clearData + explicit cookie removal so sites actually log out (clearStorageData(origin) alone was unreliable)"
+      ]
+    },
+    {
+      "version": "0.2.3",
+      "date": "2026-05-11",
+      "improvements": [
+        "Removing a session-placeholder vault row (cookie-based “remember this site”) now clears that origin’s cookies and site storage on this device and reloads open tabs for that site so you are signed out there. Normal password-only rows still only delete the vault entry."
+      ]
+    },
+    {
+      "version": "0.2.2",
+      "date": "2026-05-11",
+      "added": [
+        "Session-aware vault hints: when you are already signed in via cookies but have no saved entry for that HTTPS site, Nebula may offer a placeholder row (empty password + note). View → Add this site to vault (session login)… adds one manually. Passwords cannot be read back from cookies—edit the entry if you want your password stored."
+      ]
+    },
+    {
+      "version": "0.2.1",
+      "date": "2026-05-08",
+      "added": [
+        "Optional local Nebula account (master password): create in Settings → Privacy; unlock in Saved passwords to view, edit, or copy stored passwords; Lock or wait ~15 minutes to lock again"
+      ]
+    },
+    {
+      "version": "0.2.0",
+      "date": "2026-05-08",
+      "added": [
+        "Saved passwords vault (local only): add, edit, remove, copy username/password — View → Saved passwords or Settings → Privacy",
+        "Offer to save passwords after you submit a classic login form on HTTP(S) sites (not all single-page apps)",
+        "Site permission prompts when using Ask (camera, microphone, location, notifications, screen capture)",
+        "App-wide defaults for camera, microphone, location, notifications, and screen capture (Ask / Allow / Block)"
+      ],
+      "improvements": [
+        "Password vault file encrypted with OS secure storage when the platform supports it",
+        "Login detection: shadow DOM, delayed reads for React/Vue, login buttons & Enter on password — still best-effort (iframes / pure fetch logins may not fire)"
+      ]
+    },
+    {
+      "version": "0.1.0",
+      "date": "2026-05-08",
+      "added": [
+        "Startup prompt to restore your last tabs or start fresh",
+        "Session snapshots saved as you browse (restored when you choose)",
+        "About shows app version from package.json",
+        "Update log with categorized notes — edit renderer/changelog.json when you ship; from repo root run npm run changelog:date to stamp today's date on the entry matching package.json"
+      ]
+    }
+  ]
+}

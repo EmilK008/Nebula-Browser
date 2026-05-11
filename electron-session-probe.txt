@@ -1,0 +1,9 @@
+{
+  "registerPreloadScript": "undefined",
+  "setPreloads": "function",
+  "getPreloads": "function",
+  "preloadishMethods": [
+    "setPreloads",
+    "getPreloads"
+  ]
+}

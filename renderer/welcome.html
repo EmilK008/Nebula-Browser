@@ -1,0 +1,632 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>New tab — Nebula</title>
+    <style>
+      :root {
+        --bg: #0b0c10;
+        --surface: rgba(18, 21, 28, 0.72);
+        --text: #e8ecf4;
+        --muted: #8b95ab;
+        --accent: #6eb5ff;
+        --border: rgba(120, 140, 180, 0.14);
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+        background: var(--bg);
+        color: var(--text);
+        background-image: radial-gradient(ellipse 120% 70% at 50% -20%, rgba(110, 181, 255, 0.14), transparent 55%),
+          radial-gradient(ellipse 80% 40% at 100% 80%, rgba(99, 102, 241, 0.06), transparent 45%);
+      }
+      .ntp {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        min-height: 100vh;
+        padding: 32px 20px 48px;
+        text-align: center;
+      }
+      .ntp-mark {
+        width: 56px;
+        height: 56px;
+        margin: 0 auto 20px;
+        border-radius: 16px;
+        background: linear-gradient(145deg, rgba(110, 181, 255, 0.25), rgba(99, 102, 241, 0.18));
+        border: 1px solid var(--border);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.35);
+      }
+      .ntp-mark svg {
+        width: 28px;
+        height: 28px;
+        stroke: var(--accent);
+        fill: none;
+        stroke-width: 1.6;
+      }
+      h1 {
+        font-size: clamp(1.5rem, 4vw, 1.85rem);
+        font-weight: 600;
+        letter-spacing: -0.03em;
+        margin: 0 0 6px;
+      }
+      .greeting {
+        color: var(--muted);
+        font-size: 0.95rem;
+        margin: 0 0 20px;
+        font-weight: 500;
+      }
+      .ntp-hint {
+        max-width: 400px;
+        margin: 0 0 8px;
+        color: var(--muted);
+        font-size: 0.95rem;
+        line-height: 1.5;
+      }
+      .ntp-cue {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        margin-top: 4px;
+        padding: 8px 14px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.04);
+        border: 1px solid var(--border);
+        color: var(--muted);
+        font-size: 0.8rem;
+      }
+      .ntp-cue svg {
+        width: 16px;
+        height: 16px;
+        stroke: var(--accent);
+        fill: none;
+        stroke-width: 2;
+        flex-shrink: 0;
+      }
+      .visually-hidden {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        padding: 0;
+        margin: -1px;
+        overflow: hidden;
+        clip: rect(0, 0, 0, 0);
+        white-space: nowrap;
+        border: 0;
+      }
+      .ntp-search-wrap {
+        position: relative;
+        width: 100%;
+        max-width: 520px;
+        margin: 22px 0 0;
+      }
+      .ntp-search-inner {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        height: 46px;
+        padding: 0 6px 0 14px;
+        border-radius: 12px;
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid var(--border);
+        transition: border-color 0.2s, box-shadow 0.2s;
+      }
+      .ntp-search-inner:focus-within {
+        border-color: rgba(110, 181, 255, 0.45);
+        box-shadow: 0 0 0 3px rgba(110, 181, 255, 0.12);
+      }
+      .ntp-search-icon {
+        width: 20px;
+        height: 20px;
+        stroke: var(--muted);
+        fill: none;
+        stroke-width: 2;
+        flex-shrink: 0;
+      }
+      .ntp-search-inner:focus-within .ntp-search-icon {
+        stroke: var(--accent);
+      }
+      .ntp-search-input {
+        flex: 1;
+        min-width: 0;
+        height: 100%;
+        border: none;
+        background: transparent;
+        color: var(--text);
+        font-size: 0.95rem;
+        outline: none;
+      }
+      .ntp-search-input::placeholder {
+        color: var(--muted);
+        opacity: 0.85;
+      }
+      .ntp-search-btn {
+        flex-shrink: 0;
+        height: 36px;
+        padding: 0 16px;
+        border: none;
+        border-radius: 8px;
+        background: rgba(110, 181, 255, 0.18);
+        color: var(--accent);
+        font-size: 0.85rem;
+        font-weight: 600;
+        font-family: inherit;
+        cursor: pointer;
+        transition: background 0.15s, color 0.15s;
+      }
+      .ntp-search-btn:hover {
+        background: rgba(110, 181, 255, 0.28);
+        color: var(--text);
+      }
+      .ntp-suggestions {
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: calc(100% + 6px);
+        margin: 0;
+        padding: 6px;
+        list-style: none;
+        border-radius: 12px;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        box-shadow: 0 14px 44px rgba(0, 0, 0, 0.45);
+        max-height: min(52vh, 340px);
+        overflow-y: auto;
+        z-index: 20;
+        text-align: left;
+      }
+      .ntp-suggestions[hidden] {
+        display: none !important;
+      }
+      .ntp-suggestion {
+        display: block;
+        width: 100%;
+        text-align: left;
+        padding: 10px 12px;
+        margin: 2px 0;
+        border: none;
+        border-radius: 8px;
+        background: transparent;
+        color: inherit;
+        font: inherit;
+        cursor: pointer;
+        transition: background 0.12s;
+      }
+      .ntp-suggestion:hover,
+      .ntp-suggestion.is-active {
+        background: rgba(110, 181, 255, 0.14);
+      }
+      .ntp-suggestion-head {
+        display: flex;
+        align-items: baseline;
+        gap: 8px;
+        flex-wrap: wrap;
+        margin-bottom: 2px;
+      }
+      .ntp-suggestion-badge {
+        font-size: 10px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--accent);
+        opacity: 0.9;
+        flex-shrink: 0;
+      }
+      .ntp-suggestion-title {
+        font-size: 0.88rem;
+        font-weight: 500;
+      }
+      .ntp-suggestion-sub {
+        display: block;
+        font-size: 0.72rem;
+        color: var(--muted);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .shortcuts-panel {
+        margin-top: 36px;
+        width: 100%;
+        max-width: 440px;
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        background: var(--surface);
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
+        text-align: left;
+        overflow: hidden;
+      }
+      .shortcuts-panel summary {
+        list-style: none;
+        cursor: pointer;
+        padding: 14px 16px 14px 18px;
+        font-size: 0.9rem;
+        font-weight: 600;
+        color: var(--text);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        user-select: none;
+        transition: background 0.15s;
+      }
+      .shortcuts-panel summary:hover {
+        background: rgba(255, 255, 255, 0.04);
+      }
+      .shortcuts-panel summary::-webkit-details-marker {
+        display: none;
+      }
+      .summary-chev {
+        width: 18px;
+        height: 18px;
+        stroke: var(--muted);
+        fill: none;
+        stroke-width: 2;
+        flex-shrink: 0;
+        transition: transform 0.2s;
+      }
+      .shortcuts-panel[open] .summary-chev {
+        transform: rotate(180deg);
+      }
+      .shortcuts-body {
+        padding: 0 16px 18px;
+        border-top: 1px solid var(--border);
+      }
+      .shortcuts-section-title {
+        font-size: 0.72rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--muted);
+        margin: 16px 0 10px;
+      }
+      .shortcuts-section-title:first-child {
+        margin-top: 14px;
+      }
+      .grid {
+        display: grid;
+        gap: 8px;
+      }
+      a.tile {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        padding: 12px 14px;
+        border-radius: 10px;
+        background: rgba(255, 255, 255, 0.03);
+        border: 1px solid transparent;
+        color: inherit;
+        text-decoration: none;
+        transition: border-color 0.15s, background 0.15s;
+      }
+      a.tile:hover {
+        border-color: rgba(110, 181, 255, 0.28);
+        background: rgba(110, 181, 255, 0.06);
+      }
+      a.tile strong {
+        font-size: 0.88rem;
+        font-weight: 600;
+      }
+      a.tile small {
+        color: var(--muted);
+        font-size: 0.76rem;
+      }
+      .kbd-grid {
+        display: grid;
+        gap: 8px;
+        font-size: 0.78rem;
+        color: var(--muted);
+      }
+      .kbd-row {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+      .kbd-row span:first-child {
+        color: var(--text);
+        font-weight: 500;
+      }
+      kbd {
+        display: inline-block;
+        padding: 2px 7px;
+        border-radius: 5px;
+        background: rgba(0, 0, 0, 0.35);
+        border: 1px solid var(--border);
+        font-size: 0.72rem;
+        font-family: inherit;
+        color: var(--text);
+      }
+      .ntp-foot {
+        margin-top: 28px;
+        font-size: 0.72rem;
+        color: var(--muted);
+        opacity: 0.85;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="ntp">
+      <div class="ntp-mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24">
+          <circle cx="12" cy="12" r="10" />
+          <path d="M12 2v20M2 12h20M5 7c3 2 11 2 14 0M5 17c3-2 11-2 14 0" />
+        </svg>
+      </div>
+      <h1>Nebula</h1>
+      <p class="greeting" id="ntp-greeting">Welcome</p>
+      <p class="ntp-hint">Search here or use the address bar above to search the web or go to any site.</p>
+      <div class="ntp-cue" aria-hidden="true">
+        <svg viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7" stroke-linecap="round" stroke-linejoin="round" /></svg>
+        <span>Or use the bar at the top of the window</span>
+      </div>
+
+      <form class="ntp-search-wrap" id="ntp-search-form" role="search" action="#" method="get">
+        <label class="visually-hidden" for="ntp-search-input">Search or enter web address</label>
+        <div class="ntp-search-inner">
+          <svg class="ntp-search-icon" viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="11" cy="11" r="7" />
+            <path d="M20 20l-4-4" stroke-linecap="round" />
+          </svg>
+          <input
+            type="text"
+            id="ntp-search-input"
+            name="q"
+            class="ntp-search-input"
+            placeholder="Search the web or enter a site"
+            autocomplete="off"
+            spellcheck="false"
+            enterkeyhint="search"
+            aria-autocomplete="list"
+            aria-controls="ntp-suggestions"
+            aria-expanded="false"
+          />
+          <button type="submit" class="ntp-search-btn">Search</button>
+        </div>
+        <ul id="ntp-suggestions" class="ntp-suggestions" hidden role="listbox" aria-label="Suggestions"></ul>
+      </form>
+
+      <details class="shortcuts-panel">
+        <summary>
+          <span>Shortcuts &amp; tips</span>
+          <svg class="summary-chev" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M6 9l6 6 6-6" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+        </summary>
+        <div class="shortcuts-body">
+          <div class="shortcuts-section-title">Quick links</div>
+          <div class="grid">
+            <a class="tile" href="https://duckduckgo.com/">
+              <strong>DuckDuckGo</strong>
+              <small>Private search</small>
+            </a>
+            <a class="tile" href="https://www.wikipedia.org/">
+              <strong>Wikipedia</strong>
+              <small>Articles &amp; topics</small>
+            </a>
+            <a class="tile" href="https://www.youtube.com/">
+              <strong>YouTube</strong>
+              <small>Videos &amp; music</small>
+            </a>
+          </div>
+          <div class="shortcuts-section-title">Keyboard</div>
+          <div class="kbd-grid">
+            <div class="kbd-row"><span>New tab</span><span><kbd>Ctrl</kbd> <kbd>T</kbd></span></div>
+            <div class="kbd-row"><span>Close tab</span><span><kbd>Ctrl</kbd> <kbd>W</kbd></span></div>
+            <div class="kbd-row"><span>Reopen closed tab</span><span><kbd>Ctrl</kbd> <kbd>Shift</kbd> <kbd>T</kbd></span></div>
+            <div class="kbd-row"><span>Reload</span><span><kbd>Ctrl</kbd> <kbd>R</kbd></span></div>
+            <div class="kbd-row"><span>Focus address bar</span><span><kbd>Ctrl</kbd> <kbd>L</kbd></span></div>
+            <div class="kbd-row"><span>Bookmark page</span><span><kbd>Ctrl</kbd> <kbd>D</kbd></span></div>
+            <div class="kbd-row"><span>Find in page</span><span><kbd>Ctrl</kbd> <kbd>F</kbd></span></div>
+            <div class="kbd-row"><span>Zoom in / out</span><span><kbd>Ctrl</kbd> + / −</span></div>
+            <div class="kbd-row"><span>Actual size</span><span><kbd>Ctrl</kbd> <kbd>0</kbd></span></div>
+            <div class="kbd-row"><span>History</span><span><kbd>Ctrl</kbd> <kbd>H</kbd></span></div>
+          </div>
+          <p style="margin: 14px 0 0; font-size: 0.72rem; color: var(--muted); line-height: 1.45">
+            On Windows, press <kbd>Alt</kbd> once to show the menu bar for more commands. On macOS, many shortcuts use
+            <kbd>Cmd</kbd> instead of <kbd>Ctrl</kbd>.
+          </p>
+        </div>
+      </details>
+
+      <p class="ntp-foot">Nebula browser</p>
+    </div>
+    <script>
+      (function () {
+        var el = document.getElementById("ntp-greeting");
+        if (!el) return;
+        var h = new Date().getHours();
+        var g = "Welcome";
+        if (h >= 5 && h < 12) g = "Good morning";
+        else if (h >= 12 && h < 17) g = "Good afternoon";
+        else if (h >= 17 && h < 22) g = "Good evening";
+        else g = "Welcome back";
+        el.textContent = g;
+      })();
+      (function () {
+        function normalizeLikeOmnibox(raw) {
+          var t = typeof raw === "string" ? raw.trim() : "";
+          if (!t) return "";
+          if (/^https?:\/\//i.test(t)) return t;
+          if (/^file:\/\//i.test(t)) return t;
+          if (t.indexOf(".") !== -1 && t.indexOf(" ") === -1 && t.charAt(0) !== "/") {
+            return "https://" + t;
+          }
+          return "https://duckduckgo.com/?q=" + encodeURIComponent(t);
+        }
+
+        var form = document.getElementById("ntp-search-form");
+        var input = document.getElementById("ntp-search-input");
+        var listEl = document.getElementById("ntp-suggestions");
+        if (!form || !input || !listEl) return;
+
+        var debounceMs = 220;
+        var suggestionRows = [];
+        var selectedIndex = -1;
+        var debounceTimer = null;
+        var pendingSeq = 0;
+
+        function hideSuggestions() {
+          listEl.hidden = true;
+          listEl.replaceChildren();
+          suggestionRows = [];
+          selectedIndex = -1;
+          input.setAttribute("aria-expanded", "false");
+          input.removeAttribute("aria-activedescendant");
+        }
+
+        function renderSuggestions() {
+          listEl.replaceChildren();
+          if (suggestionRows.length === 0) {
+            listEl.hidden = true;
+            input.setAttribute("aria-expanded", "false");
+            input.removeAttribute("aria-activedescendant");
+            return;
+          }
+          listEl.hidden = false;
+          input.setAttribute("aria-expanded", "true");
+          suggestionRows.forEach(function (row, i) {
+            var li = document.createElement("li");
+            li.setAttribute("role", "presentation");
+            var btn = document.createElement("button");
+            btn.type = "button";
+            btn.className = "ntp-suggestion" + (i === selectedIndex ? " is-active" : "");
+            btn.setAttribute("role", "option");
+            btn.id = "ntp-suggest-" + i;
+            btn.setAttribute("aria-selected", i === selectedIndex ? "true" : "false");
+            btn.addEventListener("mousedown", function (e) {
+              e.preventDefault();
+            });
+            btn.addEventListener("click", function () {
+              goTo(row.navigateUrl);
+            });
+            if (row.badge) {
+              var head = document.createElement("div");
+              head.className = "ntp-suggestion-head";
+              var badge = document.createElement("span");
+              badge.className = "ntp-suggestion-badge";
+              badge.textContent = row.badge;
+              var title = document.createElement("span");
+              title.className = "ntp-suggestion-title";
+              title.textContent = row.label || "";
+              head.appendChild(badge);
+              head.appendChild(title);
+              btn.appendChild(head);
+            } else {
+              var tonly = document.createElement("span");
+              tonly.className = "ntp-suggestion-title";
+              tonly.textContent = row.label || "";
+              btn.appendChild(tonly);
+            }
+            if (row.sub) {
+              var sub = document.createElement("span");
+              sub.className = "ntp-suggestion-sub";
+              sub.textContent = row.sub;
+              btn.appendChild(sub);
+            }
+            li.appendChild(btn);
+            listEl.appendChild(li);
+          });
+          if (selectedIndex >= 0) {
+            input.setAttribute("aria-activedescendant", "ntp-suggest-" + selectedIndex);
+          } else {
+            input.removeAttribute("aria-activedescendant");
+          }
+        }
+
+        function goTo(url) {
+          if (!url) return;
+          hideSuggestions();
+          window.location.href = url;
+        }
+
+        function moveSelection(delta) {
+          var n = suggestionRows.length;
+          if (n === 0) return;
+          if (selectedIndex < 0 && delta > 0) selectedIndex = 0;
+          else selectedIndex = Math.min(n - 1, Math.max(0, selectedIndex + delta));
+          renderSuggestions();
+        }
+
+        async function refreshSuggestionsNow() {
+          var seq = ++pendingSeq;
+          var q = input.value.trim();
+          if (!q || !window.nebulaHome || typeof window.nebulaHome.getSuggestions !== "function") {
+            hideSuggestions();
+            return;
+          }
+          try {
+            var rows = await window.nebulaHome.getSuggestions(q);
+            if (seq !== pendingSeq) return;
+            if (!Array.isArray(rows)) rows = [];
+            suggestionRows = rows;
+            selectedIndex = -1;
+            renderSuggestions();
+          } catch {
+            if (seq !== pendingSeq) return;
+            hideSuggestions();
+          }
+        }
+
+        function scheduleSuggestions() {
+          if (debounceTimer) clearTimeout(debounceTimer);
+          var q = input.value.trim();
+          if (!q) {
+            hideSuggestions();
+            return;
+          }
+          debounceTimer = setTimeout(function () {
+            debounceTimer = null;
+            void refreshSuggestionsNow();
+          }, debounceMs);
+        }
+
+        form.addEventListener("submit", function (e) {
+          e.preventDefault();
+          if (selectedIndex >= 0 && suggestionRows[selectedIndex]) {
+            goTo(suggestionRows[selectedIndex].navigateUrl);
+            return;
+          }
+          var url = normalizeLikeOmnibox(input.value);
+          if (!url) return;
+          window.location.href = url;
+        });
+
+        input.addEventListener("input", function () {
+          selectedIndex = -1;
+          scheduleSuggestions();
+        });
+
+        input.addEventListener("keydown", function (e) {
+          if (listEl.hidden || suggestionRows.length === 0) {
+            return;
+          }
+          if (e.key === "ArrowDown") {
+            e.preventDefault();
+            moveSelection(1);
+          } else if (e.key === "ArrowUp") {
+            e.preventDefault();
+            moveSelection(-1);
+          } else if (e.key === "Escape") {
+            e.preventDefault();
+            hideSuggestions();
+          }
+        });
+
+        document.addEventListener("click", function (e) {
+          if (!form.contains(e.target)) hideSuggestions();
+        });
+      })();
+    </script>
+  </body>
+</html>
