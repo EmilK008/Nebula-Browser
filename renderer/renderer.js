@@ -3009,6 +3009,28 @@
     }
   }
 
+  async function offerUpdateInstall(r) {
+    if (!r || !r.updateAvailable) return;
+    try {
+      if (window.nebula?.promptUpdateInstallChoice) {
+        const res = await window.nebula.promptUpdateInstallChoice({
+          currentVersion: typeof r.currentVersion === "string" ? r.currentVersion : "",
+          latestVersion: typeof r.latestVersion === "string" ? r.latestVersion : "",
+          installerUrl: typeof r.installerUrl === "string" ? r.installerUrl : "",
+          portableUrl: typeof r.portableUrl === "string" ? r.portableUrl : "",
+          releaseUrl: typeof r.releaseUrl === "string" ? r.releaseUrl : "",
+        });
+        if (res?.choice === "cancel") showUpdateBanner(r);
+        return;
+      }
+    } catch {
+      /* */
+    }
+    const u = typeof r.releaseUrl === "string" ? r.releaseUrl.trim() : "";
+    if (u && window.nebula?.openExternalUrl) void window.nebula.openExternalUrl(u);
+    else showUpdateBanner(r);
+  }
+
   async function runUpdateCheck(verbose) {
     try {
       const r = await window.nebula?.checkForUpdates?.();
@@ -3035,7 +3057,18 @@
       }
       if (r.updateAvailable && typeof r.latestVersion === "string") {
         const dismissed = sessionStorage.getItem(UPDATE_DISMISS_KEY) || "";
-        if (dismissed !== r.latestVersion) showUpdateBanner(r);
+        if (dismissed === r.latestVersion) return;
+        if (verbose) {
+          await offerUpdateInstall(r);
+        } else {
+          const sk = `nebula-update-offered-${r.latestVersion}`;
+          if (sessionStorage.getItem(sk)) {
+            showUpdateBanner(r);
+          } else {
+            await offerUpdateInstall(r);
+            sessionStorage.setItem(sk, "1");
+          }
+        }
       } else if (verbose) {
         alert(`You're up to date (${r.currentVersion || ""}).`);
       }
@@ -3055,8 +3088,7 @@
     updateBanner.setAttribute("aria-hidden", "false");
     if (updateBannerDownload) {
       updateBannerDownload.onclick = () => {
-        const u = typeof r.releaseUrl === "string" ? r.releaseUrl.trim() : "";
-        if (u && window.nebula?.openExternalUrl) void window.nebula.openExternalUrl(u);
+        void offerUpdateInstall(r);
       };
     }
   }

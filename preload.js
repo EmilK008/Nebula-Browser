@@ -165,6 +165,9 @@ contextBridge.exposeInMainWorld("nebula", {
   checkForUpdates: () => ipcRenderer.invoke("nebula-check-for-updates"),
   getUpdateInfo: () => ipcRenderer.invoke("nebula-get-update-info"),
   openExternalUrl: (url) => ipcRenderer.invoke("nebula-open-external-url", { url }),
+  /** Native dialog: installer vs portable vs cancel; opens the chosen URL in the browser. */
+  promptUpdateInstallChoice: (payload) =>
+    ipcRenderer.invoke("nebula-prompt-update-install-choice", payload ?? {}),
   onTabMediaState: (handler) => {
     const ch = "nebula-tab-media";
     const fn = (_e, payload) => {

@@ -244,7 +244,21 @@ async function fetchLatestGithubRelease(repoKey) {
   const ver = tag.replace(/^v/i, "");
   const htmlUrl = typeof j.html_url === "string" ? j.html_url : "";
   const body = typeof j.body === "string" ? j.body.slice(0, 400) : "";
-  return { version: ver, htmlUrl, body };
+  let installerUrl = "";
+  let portableUrl = "";
+  const assets = Array.isArray(j.assets) ? j.assets : [];
+  for (const a of assets) {
+    if (!a || typeof a.browser_download_url !== "string" || typeof a.name !== "string") continue;
+    const name = a.name;
+    if (/blockmap$/i.test(name)) continue;
+    if (!/\.exe$/i.test(name)) continue;
+    if (/portable/i.test(name)) {
+      if (!portableUrl) portableUrl = a.browser_download_url;
+    } else if (!installerUrl) {
+      installerUrl = a.browser_download_url;
+    }
+  }
+  return { version: ver, htmlUrl, body, installerUrl, portableUrl };
 }
 
 function ensureGuestCapturePoll() {
@@ -418,11 +432,50 @@ ipcMain.handle("nebula-check-for-updates", async () => {
       latestVersion: rel.version,
       releaseUrl: rel.htmlUrl,
       releaseNotes: rel.body,
+      installerUrl: rel.installerUrl || "",
+      portableUrl: rel.portableUrl || "",
       repo,
     };
   } catch (err) {
     return { ok: false, reason: String(err?.message || err), currentVersion: app.getVersion() };
   }
+});
+
+ipcMain.handle("nebula-prompt-update-install-choice", async (event, payload) => {
+  const p = payload && typeof payload === "object" ? payload : {};
+  const cur = typeof p.currentVersion === "string" ? p.currentVersion : "";
+  const lat = typeof p.latestVersion === "string" ? p.latestVersion : "";
+  const installerUrl = typeof p.installerUrl === "string" ? p.installerUrl.trim() : "";
+  const portableUrl = typeof p.portableUrl === "string" ? p.portableUrl.trim() : "";
+  const releaseUrl = typeof p.releaseUrl === "string" ? p.releaseUrl.trim() : "";
+
+  const win = BrowserWindow.fromWebContents(event.sender);
+  const parent = win && !win.isDestroyed() ? win : BrowserWindow.getFocusedWindow();
+
+  const instTarget = installerUrl || releaseUrl;
+  const portTarget = portableUrl || releaseUrl;
+
+  const { response } = await dialog.showMessageBox(parent || undefined, {
+    type: "question",
+    title: "Update Nebula",
+    message: `Version ${lat} is available (you have ${cur}).`,
+    detail:
+      "Installer: run the setup to upgrade an installed Nebula (replaces the old version).\n\nPortable: download a standalone .exe you can run without replacing your current install.\n\nIf a download type is missing on the release, you will open the release page and pick the file under Assets.",
+    buttons: ["Installer (replace / upgrade)", "Portable (keep old install)", "Not now"],
+    defaultId: 0,
+    cancelId: 2,
+    noLink: true,
+  });
+
+  if (response === 0) {
+    if (instTarget) await shell.openExternal(instTarget);
+    return { ok: true, choice: "installer" };
+  }
+  if (response === 1) {
+    if (portTarget) await shell.openExternal(portTarget);
+    return { ok: true, choice: "portable" };
+  }
+  return { ok: true, choice: "cancel" };
 });
 
 ipcMain.handle("nebula-get-update-info", () => ({

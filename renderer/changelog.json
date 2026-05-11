@@ -1,6 +1,13 @@
 {
   "entries": [
     {
+      "version": "0.5.1",
+      "date": "2026-05-11",
+      "added": [
+        "Updates: on startup (once per session when a newer release exists) and from Check for updates / the banner, a system dialog offers Installer (upgrade in place), Portable (keep existing install), or Not now; GitHub release assets are matched for direct downloads when present"
+      ]
+    },
+    {
       "version": "0.5.0",
       "date": "2026-05-11",
       "added": [
