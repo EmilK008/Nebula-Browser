@@ -24,7 +24,7 @@ const { session } = require("electron");
 const LOG = "[Nebula:Adblock]";
 
 /** Serialized engine cache — bump when default filter set or engine config changes. */
-const NETWORK_CACHE_FILE = "nebula-adblock-full-v6.bin";
+const NETWORK_CACHE_FILE = "nebula-adblock-full-v8.bin";
 
 /** Same base as @ghostery/adblocker built-in lists (raw GitHub assets). */
 const LIST_BASE =
@@ -89,6 +89,34 @@ function getNebulaNetworkAllowRules() {
   ];
 }
 
+/**
+ * uBlock / EasyList rules sometimes hit streaming CDNs, conviva, or player metrics used
+ * with DRM playback. Broad @@ exceptions reduce ERR_BLOCKED_BY_CLIENT on those hosts
+ * (Castlabs Widevine still required for encrypted playback).
+ */
+function getStreamingDrmNetworkAllowRules() {
+  return [
+    "@@||netflix.com^",
+    "@@||nflxvideo.net^",
+    "@@||nflxso.net^",
+    "@@||nflximg.net^",
+    "@@||spotify.com^",
+    "@@||scdn.co^",
+    "@@||spotifycdn.com^",
+    "@@||audio-ak-spotify-com^",
+    "@@||wg.spotify.com^",
+    "@@||apresolve.spotify.com^",
+    "@@||crunchyroll.com^",
+    "@@||crunchyrollcdn.com^",
+    "@@||crunchyrollsvc.com^",
+    "@@||ipify.org^",
+    "@@||api.ipify.org^",
+    "@@||api64.ipify.org^",
+    "@@||vrv.co^",
+    "@@||widevine.com^",
+  ];
+}
+
 /** @type {any} */
 let webProfileBlocker = null;
 
@@ -104,6 +132,8 @@ function removeLegacyCaches(userData) {
     path.join(userData, "nebula-adblock-network-v3.bin"),
     path.join(userData, "nebula-adblock-full-v4.bin"),
     path.join(userData, "nebula-adblock-full-v5.bin"),
+    path.join(userData, "nebula-adblock-full-v6.bin"),
+    path.join(userData, "nebula-adblock-full-v7.bin"),
   ];
   for (const p of legacy) {
     try {
@@ -228,7 +258,7 @@ async function initAdblockEngine(webPartition, getSettings) {
 
     patchWebviewReferrerForAdblock(webProfileBlocker);
 
-    const allowRules = getNebulaNetworkAllowRules();
+    const allowRules = [...getNebulaNetworkAllowRules(), ...getStreamingDrmNetworkAllowRules()];
     if (allowRules.length > 0) {
       webProfileBlocker.updateFromDiff({ added: allowRules }, {});
       console.log(LOG, "Nebula allow rules (exceptions):", allowRules.length);

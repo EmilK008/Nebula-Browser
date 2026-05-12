@@ -1,6 +1,45 @@
 {
   "entries": [
     {
+      "version": "0.5.7",
+      "date": "2026-05-12",
+      "added": [
+        "Streaming: send Chrome-style Sec-CH-UA / Sec-CH-UA-Platform hints on requests tied to major streaming hosts (may reduce 403s on app APIs); Settings → About explains Widevine license 400 and links to Castlabs EVS for production VMP signing of shipped builds"
+      ],
+      "fixes": [
+        "Windows packaging: electron-builder afterPack runs Castlabs EVS sign-pkg on the unpacked app before NSIS and Portable targets bundle it, so the installer and Portable.exe get the same VMP-signed Nebula.exe as dist/win-unpacked (post-dist signing only touched unpacked). Set NEBULA_SKIP_EVS=1 to skip when castlabs-evs is unavailable; NEBULA_EVS_SIGN=1 fails the build if sign-pkg errors (CI)."
+      ]
+    },
+    {
+      "version": "0.5.6",
+      "date": "2026-05-12",
+      "fixes": [
+        "Networking: set an explicit Chromium disk-cache cap, disable QUIC (avoids some TLS handshake resets / net_error -101), and one-time remove broken HTTP Code Cache folders under userData (fixes Invalid cache current size from disk_cache)"
+      ]
+    },
+    {
+      "version": "0.5.5",
+      "date": "2026-05-12",
+      "fixes": [
+        "Windows: pass Chromium --no-sandbox on startup so sandboxed helpers (including Widevine CDM) can read Nebula.exe — avoids sandbox_win.cc(789) “Sandbox cannot access executable” after portable/zip installs or strict AV, which blocked DRM streaming"
+      ]
+    },
+    {
+      "version": "0.5.4",
+      "date": "2026-05-12",
+      "fixes": [
+        "DRM streaming: relax synchronous media permission checks that denied empty/unknown mediaType (blocked EME-style checks); auto-allow ambiguous media requests on major streaming origins; disable OS sandbox on tab webviews so Widevine CDM can load in guests; add adblock @@ exceptions for Netflix/Spotify/Crunchyroll CDNs and bump filter cache to v7"
+      ]
+    },
+    {
+      "version": "0.5.3",
+      "date": "2026-05-12",
+      "added": [
+        "DRM streaming: switch to Castlabs Electron for Content Security (Widevine CDM via components.whenReady) so sites like Netflix, Spotify, and Crunchyroll can play protected video/audio; stricter third-party cookie rules skip stripping for more streaming/CDN hosts",
+        "For strict production VMP (some Netflix policies), see Castlabs EVS in the castlabs/electron-releases wiki — dev ECS builds are already VMP-signed for development."
+      ]
+    },
+    {
       "version": "0.5.2",
       "date": "2026-05-11",
       "added": [

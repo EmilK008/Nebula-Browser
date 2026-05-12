@@ -10,6 +10,7 @@ const {
   clipboard,
   safeStorage,
   WebFrameMain,
+  components,
 } = require("electron");
 const path = require("path");
 const fs = require("fs");
@@ -34,6 +35,23 @@ const guestChildWindowFocusHooks = new WeakSet();
 
 /** Helps streaming sites that call video.play() without a fresh user gesture after navigation. */
 app.commandLine.appendSwitch("autoplay-policy", "no-user-gesture-required");
+
+/**
+ * Windows: Chromium’s sandbox requires ACLs on the app folder so sandboxed children (GPU,
+ * network, Widevine CDM helpers) can read the executable. Portable/zipped installs and some
+ * AV setups leave that out → `sandbox_win.cc(789) Sandbox cannot access executable` and DRM
+ * playback fails. Disabling the Chromium sandbox matches common Electron + Widevine setups;
+ * tab webviews already run with relaxed renderer sandbox for EME.
+ */
+if (process.platform === "win32") {
+  app.commandLine.appendSwitch("no-sandbox");
+}
+
+/** Corrupted meta can yield `Invalid cache (current) size` (disk_cache backend_impl). */
+app.commandLine.appendSwitch("disk-cache-size", String(128 * 1024 * 1024));
+
+/** Some networks reset QUIC mid-handshake (net_error -101 during TLS). */
+app.commandLine.appendSwitch("disable-quic");
 
 /**
  * Picture-in-picture: Chromium opens a floating, resizable window (OS / compositor keeps it on top).
@@ -2116,6 +2134,34 @@ const isMac = process.platform === "darwin";
 /** Shared disk session for all webviews: logins and cookies persist across tabs and restarts. */
 const WEB_PARTITION = "persist:nebula";
 
+/**
+ * One-time delete of Chromium HTTP disk cache folders. Fixes broken cache index / size
+ * that surfaces as `Invalid cache (current) size` and can cascade into TLS handshake failures.
+ */
+function maybeResetHttpDiskCacheOnce() {
+  const marker = path.join(app.getPath("userData"), ".nebula-http-disk-cache-reset-v1");
+  if (fs.existsSync(marker)) return;
+  const rm = (p) => {
+    try {
+      fs.rmSync(p, { recursive: true, force: true });
+    } catch {
+      /* */
+    }
+  };
+  try {
+    const ud = app.getPath("userData");
+    const sub = WEB_PARTITION.startsWith("persist:") ? WEB_PARTITION.slice("persist:".length) : "nebula";
+    rm(path.join(ud, "Cache"));
+    rm(path.join(ud, "Code Cache"));
+    rm(path.join(ud, "Partitions", sub, "Cache"));
+    rm(path.join(ud, "Partitions", sub, "Code Cache"));
+    fs.writeFileSync(marker, "");
+    console.log("[Nebula:Net] Reset HTTP disk cache directories once.");
+  } catch (e) {
+    console.warn("[Nebula:Net] HTTP cache reset:", e?.message || e);
+  }
+}
+
 /** Chromium permission strings we allow sites to request at all (others are denied). */
 const PERMISSION_REQUEST_ALLOWLIST = new Set([
   "media",
@@ -2163,11 +2209,12 @@ function permissionOriginFromDetails(wc, details) {
 
 function checkMediaPermissionSync(origin, details) {
   const mt = details?.mediaType;
-  if (!mt) return false;
-  if (mt === "video" || mt === "unknown") {
+  /** MSE / EME / autoplay checks often omit mediaType or use "unknown" — do not tie those to camera/mic. */
+  if (!mt || mt === "unknown") return true;
+  if (mt === "video") {
     if (getEffectiveSiteValue(origin, "camera") !== "allow") return false;
   }
-  if (mt === "audio" || mt === "unknown") {
+  if (mt === "audio") {
     if (getEffectiveSiteValue(origin, "microphone") !== "allow") return false;
   }
   return true;
@@ -2180,11 +2227,42 @@ function checkSimplePermissionSync(origin, siteKey) {
   return false;
 }
 
+/** Origins where empty getUserMedia-style requests are usually EME / player bootstrap, not webcam. */
+function isLikelyStreamingPlaybackOrigin(origin) {
+  if (!origin || typeof origin !== "string") return false;
+  try {
+    const h = new URL(origin).hostname.toLowerCase().replace(/^www\./, "");
+    const roots = [
+      "netflix.com",
+      "spotify.com",
+      "crunchyroll.com",
+      "disneyplus.com",
+      "hulu.com",
+      "max.com",
+      "hbomax.com",
+      "primevideo.com",
+      "peacocktv.com",
+      "paramountplus.com",
+      "youtube.com",
+      "music.youtube.com",
+      "twitch.tv",
+      "soundcloud.com",
+    ];
+    return roots.some((r) => h === r || h.endsWith("." + r));
+  } catch {
+    return false;
+  }
+}
+
 async function handleMediaPermissionRequest(wc, callback, details) {
   const origin = permissionOriginFromDetails(wc, details);
   const mtArr =
     details && typeof details === "object" && Array.isArray(details.mediaTypes) ? details.mediaTypes : [];
   const defaultBoth = mtArr.length === 0;
+  if (defaultBoth && isLikelyStreamingPlaybackOrigin(origin)) {
+    callback(true);
+    return;
+  }
   const wantVideo = defaultBoth || mtArr.includes("video");
   const wantAudio = defaultBoth || mtArr.includes("audio");
 
@@ -2276,7 +2354,7 @@ function shouldPreserveCookiesForStreamingUrl(urlStr) {
     return true;
   }
   if (
-    /\.nflxvideo\.net|\.nflxso\.net|\.amazonvideo\.com|\.aiv-delivery\.net|disney-plus\.net|\.disney\.api\.edge|\.huluim\.com|\.hulu\.com\/.*drm|\.hbomaxcdn\.com|\.max-streaming\.net|\.skycdn\.co\.uk|\.btcdn\.net|\.sky\.com\/.*drm/i.test(
+    /\.nflxvideo\.net|\.nflxso\.net|\.amazonvideo\.com|\.aiv-delivery\.net|disney-plus\.net|\.disney\.api\.edge|\.huluim\.com|\.hulu\.com\/.*drm|\.hbomaxcdn\.com|\.max-streaming\.net|\.skycdn\.co\.uk|\.btcdn\.net|\.sky\.com\/.*drm|\.spotifycdn\.com|audio-ak-spotify-com|\.scdn\.co|crunchyroll|crunchyrollsvc|ipify\.org|\.vrv\.co|\.licensedelivery\.|\.licensedash\.|\.license\.|\.widevine\.com/i.test(
       lower
     )
   ) {
@@ -2296,19 +2374,60 @@ function chromeAlignedUserAgent() {
   return `Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${chromeVer} Safari/537.36`;
 }
 
+/**
+ * Some streaming stacks gate APIs on Sec-CH-UA (expecting Google Chrome, not only Chromium).
+ * Electron’s default hints can yield 403 on config/CDN calls; license 400 is usually separate (VMP).
+ * @param {Record<string, string | string[]>} headers
+ * @param {string} requestUrlStr
+ * @param {string} pageUrlStr
+ */
+function applyChromeLikeClientHintsForStreaming(headers, requestUrlStr, pageUrlStr) {
+  let reqHost = "";
+  try {
+    reqHost = new URL(requestUrlStr).hostname.toLowerCase();
+  } catch {
+    return;
+  }
+  let pageHost = "";
+  try {
+    if (pageUrlStr && /^https?:/i.test(pageUrlStr)) pageHost = new URL(pageUrlStr).hostname.toLowerCase();
+  } catch {
+    /* */
+  }
+  const hay = `${reqHost} ${pageHost}`;
+  if (
+    !/crunchyroll|crunchyrollsvc|netflix|nflx|spotify|scdn\.co|spotifycdn|disney|hulu|hbomax|max\.com|primevideo|paramount|peacock|ipify|widevine|gvt1|googlevideo/i.test(
+      hay
+    )
+  ) {
+    return;
+  }
+  const major = String((process.versions.chrome || "130").split(".")[0]);
+  headers["Sec-CH-UA"] = `"Google Chrome";v="${major}", "Chromium";v="${major}", "Not_A Brand";v="24"`;
+  headers["Sec-CH-UA-Mobile"] = "?0";
+  if (process.platform === "darwin") {
+    headers["Sec-CH-UA-Platform"] = '"macOS"';
+  } else if (process.platform === "win32") {
+    headers["Sec-CH-UA-Platform"] = '"Windows"';
+  } else {
+    headers["Sec-CH-UA-Platform"] = '"Linux"';
+  }
+}
+
 function attachThirdPartyCookieBlocking(sess) {
   sess.webRequest.onBeforeSendHeaders((details, callback) => {
     const headers = { ...(details.requestHeaders || {}) };
-    if (shouldPreserveCookiesForStreamingUrl(details.url)) {
-      callback({ requestHeaders: headers });
-      return;
-    }
     const wc = details.webContents;
     let pageUrl = "";
     try {
       if (wc && !wc.isDestroyed()) pageUrl = wc.getURL() || "";
     } catch {
       pageUrl = "";
+    }
+    applyChromeLikeClientHintsForStreaming(headers, details.url, pageUrl);
+    if (shouldPreserveCookiesForStreamingUrl(details.url)) {
+      callback({ requestHeaders: headers });
+      return;
     }
     if (!pageUrl || !/^https?:/i.test(pageUrl)) {
       callback({ requestHeaders: headers });
@@ -2661,6 +2780,28 @@ function registerAppMenu() {
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
+/**
+ * Widevine CDM (DRM) is not shipped with stock Electron. Nebula expects
+ * castlabs/electron-releases (`…+wvcus`) as the `electron` devDependency; this waits for the CDM
+ * before any window loads streaming sites.
+ */
+async function ensureWidevineComponentsReady() {
+  try {
+    if (!components || typeof components.whenReady !== "function") {
+      console.warn(
+        "[Nebula:DRM] Widevine components API missing — use castlabs electron-releases (e.g. #v34.5.8+wvcus) for Netflix/Spotify/Crunchyroll playback."
+      );
+      return;
+    }
+    await components.whenReady();
+    if (typeof components.status === "function") {
+      console.log("[Nebula:DRM] components ready:", components.status());
+    }
+  } catch (e) {
+    console.warn("[Nebula:DRM] components.whenReady failed:", e?.message || e);
+  }
+}
+
 function createWindow() {
   const saved = loadWindowState();
   const win = new BrowserWindow({
@@ -2729,6 +2870,8 @@ function installGuestLoginSessionPreload() {
 }
 
 app.whenReady().then(async () => {
+  maybeResetHttpDiskCacheOnce();
+  await ensureWidevineComponentsReady();
   registerAppMenu();
   configureWebProfileSession();
   attachDownloadHandlers(session.fromPartition(WEB_PARTITION));

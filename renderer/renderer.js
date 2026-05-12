@@ -64,6 +64,7 @@
   const settingsOpenChangelog = document.getElementById("settings-open-changelog");
   const settingsCheckUpdates = document.getElementById("settings-check-updates");
   const settingsUpdateHint = document.getElementById("settings-update-hint");
+  const settingsOpenEvsDocs = document.getElementById("settings-open-evs-docs");
   const updateBanner = document.getElementById("update-banner");
   const updateBannerText = document.getElementById("update-banner-text");
   const updateBannerDownload = document.getElementById("update-banner-download");
@@ -3279,7 +3280,7 @@
     el.setAttribute("allowfullscreen", "true");
     el.setAttribute(
       "webpreferences",
-      "contextIsolation=yes,nodeIntegration=no,sandbox=yes,nativeWindowOpen=yes,autoplayPolicy=no-user-gesture-required"
+      "contextIsolation=yes,nodeIntegration=no,sandbox=no,nativeWindowOpen=yes,autoplayPolicy=no-user-gesture-required"
     );
     stack.appendChild(el);
 
@@ -4044,6 +4045,13 @@
   }
   if (settingsCheckUpdates) {
     settingsCheckUpdates.addEventListener("click", () => void runUpdateCheck(true));
+  }
+  if (settingsOpenEvsDocs) {
+    settingsOpenEvsDocs.addEventListener("click", (e) => {
+      e.preventDefault();
+      const u = "https://github.com/castlabs/electron-releases/wiki/EVS";
+      if (window.nebula?.openExternalUrl) void window.nebula.openExternalUrl(u);
+    });
   }
 
   if (window.nebula?.onTabMediaState) {

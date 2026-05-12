@@ -650,6 +650,22 @@
               </p>
               <p id="settings-update-hint" class="settings-hint" hidden></p>
               <p class="settings-hint">
+                <strong>DRM (Crunchyroll, Netflix, Spotify):</strong> A <code class="settings-inline-code">400</code> from
+                Google’s Widevine endpoint usually means <strong>unsigned or dev-only VMP</strong>. Ship builds need
+                <a href="#" id="settings-open-evs-docs">Castlabs EVS (production VMP signing)</a> on the
+                <code class="settings-inline-code">win-unpacked</code> folder (the directory that contains
+                <code class="settings-inline-code">Nebula.exe</code>), then ship that signed tree. On Windows, if you
+                Authenticode-sign the exe, run EVS <strong>after</strong> that step; any later edit or re-sign of
+                <code class="settings-inline-code">Nebula.exe</code> invalidates VMP. The build runs EVS
+                <code class="settings-inline-code">sign-pkg</code> in an <code class="settings-inline-code">afterPack</code>
+                hook (before the NSIS and Portable artifacts are produced) so those installers match
+                <code class="settings-inline-code">win-unpacked</code>; signing only after
+                <code class="settings-inline-code">npm run dist</code> would leave them unsigned. After packaging, run
+                <code class="settings-inline-code">npm run verify:vmp</code> to confirm the signature. A
+                <code class="settings-inline-code">403</code> on a site’s <em>own</em> license URL is often a session,
+                region, or app-check issue (not fixed by EVS alone).
+              </p>
+              <p class="settings-hint">
                 Bump <code class="settings-inline-code">version</code> in <code class="settings-inline-code">package.json</code> when you ship. In
                 <code class="settings-inline-code">renderer/changelog.json</code>, use optional arrays
                 <code class="settings-inline-code">added</code>, <code class="settings-inline-code">improvements</code>, and
