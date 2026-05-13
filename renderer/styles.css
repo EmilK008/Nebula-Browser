@@ -444,6 +444,155 @@ body {
 .tabs-row {
   min-height: 36px;
   padding-bottom: 6px;
+  position: relative;
+}
+
+.tab-ctx-menu {
+  position: fixed;
+  z-index: 80;
+  min-width: 200px;
+  padding: 4px 0;
+  border-radius: 8px;
+  background: var(--bg-elevated, #1a1b20);
+  border: 1px solid var(--border);
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.45);
+}
+
+.tab-ctx-menu[hidden] {
+  display: none !important;
+}
+
+.tab-ctx-menu button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 8px 14px;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.tab-ctx-menu button:hover:not(:disabled) {
+  background: rgba(110, 181, 255, 0.12);
+}
+
+.tab-ctx-menu button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.tab-group-rename-panel {
+  position: fixed;
+  inset: 0;
+  z-index: 85;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+
+.tab-group-rename-panel[hidden] {
+  display: none !important;
+}
+
+.tab-group-rename-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.tab-group-rename-dialog {
+  position: relative;
+  z-index: 1;
+  width: min(400px, 100%);
+  padding: 18px 20px 16px;
+  border-radius: 12px;
+  background: var(--bg-elevated, #1a1b20);
+  border: 1px solid var(--border);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5);
+}
+
+.tab-group-rename-title {
+  margin: 0 0 12px;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.tab-group-rename-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg-deep);
+  color: var(--text);
+  font-size: 14px;
+  margin-bottom: 12px;
+}
+
+.tab-group-rename-color-label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+
+.tab-group-rename-color-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.tab-group-rename-color-input {
+  width: 48px;
+  height: 36px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-deep);
+  cursor: pointer;
+}
+
+.tab-group-rename-swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+}
+
+.tab-group-rename-swatch {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  padding: 0;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.tab-group-rename-swatch:hover {
+  transform: scale(1.08);
+  border-color: rgba(255, 255, 255, 0.45);
+}
+
+.tab-group-rename-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.nebula-tab-group--drag-target {
+  outline: 2px dashed var(--accent);
+  outline-offset: 2px;
+  border-radius: 8px;
 }
 
 .tabs-strip {
@@ -451,6 +600,7 @@ body {
   align-items: flex-end;
   gap: 4px;
   overflow-x: auto;
+  position: relative;
   /* Hide scrollbar — row still scrolls with trackpad/touch; avoids empty sliver when content fits */
   scrollbar-width: none;
   -ms-overflow-style: none;
@@ -500,6 +650,76 @@ body {
   margin-bottom: -1px;
   position: relative;
   z-index: 1;
+}
+
+.tab-reorder-indicator {
+  position: absolute;
+  top: 4px;
+  bottom: 8px;
+  width: 2px;
+  margin-left: -1px;
+  border-radius: 2px;
+  background: var(--accent);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+  z-index: 6;
+  opacity: 0;
+  transition: opacity 0.08s;
+}
+
+.tab-reorder-indicator.is-visible {
+  opacity: 1;
+}
+
+.nebula-tab-group {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  flex-shrink: 0;
+  gap: 2px;
+  max-width: min(420px, 100%);
+  padding: 2px 4px 0;
+  border-radius: 8px 8px 0 0;
+  border: 1px solid color-mix(in srgb, var(--tg-color, #6e9fff) 55%, transparent);
+  border-bottom: none;
+  background: color-mix(in srgb, var(--tg-color, #6e9fff) 12%, rgba(255, 255, 255, 0.02));
+}
+
+.tab-group-head {
+  flex-shrink: 0;
+  align-self: stretch;
+  text-align: left;
+  padding: 2px 6px 4px;
+  margin: 0;
+  border: none;
+  border-radius: 6px 6px 0 0;
+  background: color-mix(in srgb, var(--tg-color, #6e9fff) 22%, transparent);
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.tab-group-head:hover {
+  filter: brightness(1.08);
+}
+
+.tab-group-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+  flex-wrap: nowrap;
+  min-width: 0;
+  min-height: 28px;
+}
+
+.nebula-tab-group .tab {
+  border-radius: 6px 6px 0 0;
 }
 
 .tab-title {
@@ -1859,9 +2079,11 @@ body {
   display: flex;
   align-items: flex-start;
   justify-content: center;
-  padding: 48px 24px 24px;
+  padding: 10px 14px 16px;
   box-sizing: border-box;
   pointer-events: none;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .vault-panel:not([hidden]) {
@@ -1882,15 +2104,17 @@ body {
 .vault-panel-dialog {
   position: relative;
   width: min(560px, 100%);
-  max-height: min(82vh, 720px);
+  max-height: min(92dvh, calc(100vh - 20px));
   display: flex;
   flex-direction: column;
   border-radius: var(--radius);
   background: rgba(14, 16, 20, 0.98);
   border: 1px solid var(--border);
   box-shadow: 0 24px 80px rgba(0, 0, 0, 0.55);
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
   min-height: 0;
+  flex-shrink: 0;
 }
 
 .vault-panel-body {
@@ -1898,14 +2122,16 @@ body {
   min-height: 0;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 
 .vault-list-wrap {
   position: relative;
-  flex: 1;
-  min-height: 0;
+  flex: 1 1 0;
+  min-height: min(180px, 32vh);
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 
 .vault-unlock-overlay {
@@ -2014,6 +2240,7 @@ body {
 }
 
 .vault-panel-toolbar {
+  flex-shrink: 0;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -2040,6 +2267,7 @@ body {
 }
 
 .vault-toolbar-secondary {
+  flex-shrink: 0;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -2126,6 +2354,12 @@ body {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  flex-shrink: 0;
+}
+
+.vault-form-wrap:not([hidden]) {
+  max-height: min(42vh, 340px);
+  overflow-y: auto;
 }
 
 .vault-field {
@@ -2168,6 +2402,7 @@ body {
 .vault-hint {
   margin: 0;
   padding: 8px 16px 0;
+  flex-shrink: 0;
 }
 
 .vault-list {
@@ -2175,7 +2410,7 @@ body {
   margin: 0;
   padding: 8px 12px 14px;
   overflow-y: auto;
-  flex: 1;
+  flex: 1 1 0;
   min-height: 0;
   position: relative;
   z-index: 0;

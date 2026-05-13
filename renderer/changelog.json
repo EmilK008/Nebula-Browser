@@ -1,13 +1,22 @@
 {
   "entries": [
     {
+      "version": "0.5.8",
+      "date": "2026-05-13",
+      "added": [
+        "Tabs: drag along the strip to reorder; drag onto a group header or row to join, or onto ungrouped strip to leave; right-click tab or group header for groups (new group, edit name and color, collapse, remove from group, ungroup, close all). Session restore stores groups (format v2)."
+      ],
+      "fixes": [
+        "Windows packaging: electron-builder afterPack runs Castlabs EVS sign-pkg on the unpacked app before NSIS and Portable artifacts bundle it, so installers and Portable.exe match win-unpacked VMP (NEBULA_SKIP_EVS=1 to skip; NEBULA_EVS_SIGN=1 fails the build on EVS errors for CI).",
+        "Shell focus: do not focus the active tab webview while the address bar, omnibox suggestions, downloads dock, or update banner has focus (avoids typing feeling dead until alt-tab).",
+        "Saved passwords: vault panel reserves list height with an internal scroll on the add-entry form when it is tall; the vault overlay and dialog scroll on short windows so controls stay reachable."
+      ]
+    },
+    {
       "version": "0.5.7",
       "date": "2026-05-12",
       "added": [
         "Streaming: send Chrome-style Sec-CH-UA / Sec-CH-UA-Platform hints on requests tied to major streaming hosts (may reduce 403s on app APIs); Settings → About explains Widevine license 400 and links to Castlabs EVS for production VMP signing of shipped builds"
-      ],
-      "fixes": [
-        "Windows packaging: electron-builder afterPack runs Castlabs EVS sign-pkg on the unpacked app before NSIS and Portable targets bundle it, so the installer and Portable.exe get the same VMP-signed Nebula.exe as dist/win-unpacked (post-dist signing only touched unpacked). Set NEBULA_SKIP_EVS=1 to skip when castlabs-evs is unavailable; NEBULA_EVS_SIGN=1 fails the build if sign-pkg errors (CI)."
       ]
     },
     {

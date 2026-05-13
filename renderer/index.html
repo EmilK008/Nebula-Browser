@@ -125,6 +125,42 @@
       </div>
       <div class="bookmarks-bar" id="bookmarks-bar" hidden></div>
       <div class="tabs-row" id="no-drag">
+        <div
+          class="tab-ctx-menu"
+          id="tab-ctx-menu"
+          hidden
+          role="menu"
+          aria-label="Tab actions"
+        ></div>
+        <div id="tab-group-rename-panel" class="tab-group-rename-panel" hidden aria-hidden="true">
+          <div class="tab-group-rename-backdrop" id="tab-group-rename-backdrop" aria-hidden="true"></div>
+          <div
+            class="tab-group-rename-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="tab-group-rename-title"
+          >
+            <h3 id="tab-group-rename-title" class="tab-group-rename-title">Edit tab group</h3>
+            <input
+              type="text"
+              id="tab-group-rename-input"
+              class="tab-group-rename-input"
+              maxlength="80"
+              spellcheck="false"
+              autocomplete="off"
+              aria-label="Group name"
+            />
+            <label class="tab-group-rename-color-label" for="tab-group-rename-color">Color</label>
+            <div class="tab-group-rename-color-row">
+              <input type="color" id="tab-group-rename-color" class="tab-group-rename-color-input" value="#79b8ff" aria-label="Group color" />
+              <div class="tab-group-rename-swatches" id="tab-group-rename-swatches" aria-label="Preset colors"></div>
+            </div>
+            <div class="tab-group-rename-actions">
+              <button type="button" class="settings-action-btn" id="tab-group-rename-cancel">Cancel</button>
+              <button type="button" class="settings-save-btn" id="tab-group-rename-save">Save</button>
+            </div>
+          </div>
+        </div>
         <div class="tabs-strip" id="tabs-strip">
           <button
             type="button"

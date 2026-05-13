@@ -15,6 +15,14 @@
   const ZOOM_STEP = 1.12;
 
   const tabsStrip = document.getElementById("tabs-strip");
+  const tabCtxMenu = document.getElementById("tab-ctx-menu");
+  const tabGroupRenamePanel = document.getElementById("tab-group-rename-panel");
+  const tabGroupRenameBackdrop = document.getElementById("tab-group-rename-backdrop");
+  const tabGroupRenameInput = document.getElementById("tab-group-rename-input");
+  const tabGroupRenameColor = document.getElementById("tab-group-rename-color");
+  const tabGroupRenameSwatches = document.getElementById("tab-group-rename-swatches");
+  const tabGroupRenameSave = document.getElementById("tab-group-rename-save");
+  const tabGroupRenameCancel = document.getElementById("tab-group-rename-cancel");
   const stack = document.getElementById("webview-stack");
   const contentMain = stack ? stack.parentElement : null;
   const urlInput = document.getElementById("url-input");
@@ -128,10 +136,20 @@
   /** @type {Map<string, HTMLElement>} */
   const downloadElById = new Map();
 
-  /** @type {{ id: string, el: Electron.WebviewTag, tabEl: HTMLElement, titleEl: HTMLElement, faviconEl: HTMLImageElement }[]} */
+  /** @type {{ id: string, el: Electron.WebviewTag | null, tabEl: HTMLElement, titleEl: HTMLElement, faviconEl: HTMLImageElement, groupId: string | null, guestWcId: number | null, muteBtn: HTMLButtonElement, camBtn: HTMLButtonElement, micBtn: HTMLButtonElement, mediaStrip: HTMLElement, mediaState: { audible: boolean, audioMuted: boolean, camera: boolean, microphone: boolean } }[]} */
   let tabs = [];
   let activeId = null;
   let idSeq = 0;
+  /** @type {{ id: string, label: string, color: string, collapsed: boolean }[]} */
+  let tabGroups = [];
+  let tabGroupSeq = 0;
+  /** @type {HTMLElement | null} */
+  let tabReorderIndicator = null;
+  let tabStripReorderActive = false;
+  /** @type {string | null} */
+  let tabCtxTargetId = null;
+  /** @type {string | null} */
+  let tabGroupRenameGid = null;
   /** @type {{ url: string, title: string }[]} */
   let bookmarks = [];
   /** @type {{ url: string, title: string }[]} */
@@ -259,8 +277,10 @@
       const raw = localStorage.getItem(SESSION_RESTORE_KEY);
       if (!raw) return null;
       const p = JSON.parse(raw);
-      if (!p || p.version !== 1 || !Array.isArray(p.tabs)) return null;
-      return p;
+      if (!p || typeof p !== "object" || !Array.isArray(p.tabs)) return null;
+      if (p.version === 2 && typeof p.version === "number") return p;
+      if (p.version === 1 && typeof p.version === "number") return p;
+      return null;
     } catch {
       return null;
     }
@@ -272,6 +292,488 @@
     } catch {
       /* */
     }
+  }
+
+  const TAB_GROUP_PALETTE = [
+    "#f28b82",
+    "#fdd663",
+    "#7bc89c",
+    "#79b8ff",
+    "#c58af9",
+    "#ffad47",
+    "#72d6c8",
+    "#afb9cf",
+  ];
+
+  function nextTabGroupColor(index) {
+    return TAB_GROUP_PALETTE[Math.abs(index) % TAB_GROUP_PALETTE.length];
+  }
+
+  function hexColorForColorInput(raw) {
+    const s = typeof raw === "string" ? raw.trim() : "";
+    if (/^#[0-9a-fA-F]{6}$/.test(s)) return s.toLowerCase();
+    if (/^#[0-9a-fA-F]{3}$/.test(s)) {
+      const r = s[1];
+      const g = s[2];
+      const b = s[3];
+      return `#${r}${r}${g}${g}${b}${b}`.toLowerCase();
+    }
+    return "#79b8ff";
+  }
+
+  function pruneUnusedTabGroups() {
+    tabGroups = tabGroups.filter((g) => tabs.some((t) => t.groupId === g.id));
+  }
+
+  function dedupeSplitTabGroupRuns() {
+    const seen = new Set();
+    let i = 0;
+    while (i < tabs.length) {
+      const g = tabs[i].groupId;
+      if (!g) {
+        i++;
+        continue;
+      }
+      let j = i;
+      while (j < tabs.length && tabs[j].groupId === g) j++;
+      if (seen.has(g)) {
+        const newId = "tg" + ++tabGroupSeq;
+        const oldMeta = tabGroups.find((x) => x.id === g) || {
+          label: "Group",
+          color: nextTabGroupColor(tabGroups.length),
+        };
+        tabGroups.push({
+          id: newId,
+          label: oldMeta.label,
+          color: oldMeta.color,
+          collapsed: false,
+        });
+        for (let k = i; k < j; k++) tabs[k].groupId = newId;
+      } else {
+        seen.add(g);
+      }
+      i = j;
+    }
+    pruneUnusedTabGroups();
+  }
+
+  function ensureTabReorderIndicator() {
+    if (!tabsStrip) return null;
+    if (tabReorderIndicator && tabsStrip.contains(tabReorderIndicator)) return tabReorderIndicator;
+    const el = document.createElement("div");
+    el.className = "tab-reorder-indicator";
+    el.setAttribute("aria-hidden", "true");
+    tabsStrip.appendChild(el);
+    tabReorderIndicator = el;
+    return el;
+  }
+
+  /** @type {HTMLElement | null} */
+  let tabDragHighlightGroupEl = null;
+
+  function clearTabGroupDragHighlight() {
+    if (tabDragHighlightGroupEl) {
+      tabDragHighlightGroupEl.classList.remove("nebula-tab-group--drag-target");
+      tabDragHighlightGroupEl = null;
+    }
+  }
+
+  function hideTabReorderIndicator() {
+    tabStripReorderActive = false;
+    clearTabGroupDragHighlight();
+    if (tabReorderIndicator) tabReorderIndicator.classList.remove("is-visible");
+  }
+
+  function positionTabReorderIndicator(insertBefore) {
+    const ind = ensureTabReorderIndicator();
+    if (!ind || !tabsStrip) return;
+    const stripRect = tabsStrip.getBoundingClientRect();
+    let x = stripRect.left + 6;
+    if (insertBefore >= 0 && insertBefore < tabs.length) {
+      const r = tabs[insertBefore].tabEl.getBoundingClientRect();
+      x = r.left - stripRect.left + tabsStrip.scrollLeft;
+    } else if (tabs.length > 0) {
+      const r = tabs[tabs.length - 1].tabEl.getBoundingClientRect();
+      x = r.right - stripRect.left + tabsStrip.scrollLeft;
+    } else if (btnNewTabStrip) {
+      const r = btnNewTabStrip.getBoundingClientRect();
+      x = r.left - stripRect.left + tabsStrip.scrollLeft;
+    }
+    ind.style.left = `${Math.max(0, x)}px`;
+    ind.classList.add("is-visible");
+  }
+
+  function syncTabStripDom() {
+    if (!tabsStrip || !btnNewTabStrip) return;
+    pruneUnusedTabGroups();
+    const keep = new Set([btnNewTabStrip]);
+    if (tabReorderIndicator && tabsStrip.contains(tabReorderIndicator)) keep.add(tabReorderIndicator);
+    for (const n of Array.from(tabsStrip.children)) {
+      if (!keep.has(n)) n.remove();
+    }
+    dedupeSplitTabGroupRuns();
+    let i = 0;
+    while (i < tabs.length) {
+      const gid = tabs[i].groupId;
+      if (!gid || !tabGroups.find((g) => g.id === gid)) {
+        if (gid) tabs[i].groupId = null;
+        tabsStrip.insertBefore(tabs[i].tabEl, btnNewTabStrip);
+        i++;
+        continue;
+      }
+      let j = i;
+      while (j < tabs.length && tabs[j].groupId === gid) j++;
+      const meta = tabGroups.find((g) => g.id === gid) || {
+        id: gid,
+        label: "Group",
+        color: nextTabGroupColor(0),
+        collapsed: false,
+      };
+      const wrap = document.createElement("div");
+      wrap.className = "nebula-tab-group";
+      wrap.dataset.groupId = gid;
+      wrap.style.setProperty("--tg-color", meta.color || nextTabGroupColor(0));
+      const head = document.createElement("button");
+      head.type = "button";
+      head.className = "tab-group-head";
+      head.textContent = meta.label || "Group";
+      head.title = "Click to collapse or expand · right-click for menu · drag a tab here to add to this group";
+      head.addEventListener("click", (e) => {
+        e.preventDefault();
+        toggleTabGroupCollapsed(gid);
+      });
+      head.addEventListener("contextmenu", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        hideTabContextMenu();
+        openGroupContextMenu(e.clientX, e.clientY, gid);
+      });
+      const row = document.createElement("div");
+      row.className = "tab-group-row";
+      for (let k = i; k < j; k++) row.appendChild(tabs[k].tabEl);
+      if (meta.collapsed) {
+        row.hidden = true;
+        head.setAttribute("aria-expanded", "false");
+      } else {
+        head.setAttribute("aria-expanded", "true");
+      }
+      wrap.appendChild(head);
+      wrap.appendChild(row);
+      tabsStrip.insertBefore(wrap, btnNewTabStrip);
+      i = j;
+    }
+    if (tabReorderIndicator && !tabsStrip.contains(tabReorderIndicator)) {
+      tabsStrip.appendChild(tabReorderIndicator);
+    }
+  }
+
+  function reorderTabToIndex(draggedId, insertBefore) {
+    const from = tabs.findIndex((t) => t.id === draggedId);
+    if (from < 0) return;
+    const ins = Math.max(0, Math.min(Number(insertBefore) || 0, tabs.length));
+    if (ins === from || ins === from + 1) {
+      syncTabStripDom();
+      return;
+    }
+    const [row] = tabs.splice(from, 1);
+    let to = ins;
+    if (from < to) to--;
+    tabs.splice(to, 0, row);
+    dedupeSplitTabGroupRuns();
+    pruneUnusedTabGroups();
+    syncTabStripDom();
+    scheduleSaveSessionSnapshot();
+  }
+
+  function moveTabToEndOfGroup(tabId, gid) {
+    const from = tabs.findIndex((t) => t.id === tabId);
+    if (from < 0) return;
+    const [row] = tabs.splice(from, 1);
+    let insertAt = tabs.length;
+    for (let i = tabs.length - 1; i >= 0; i--) {
+      if (tabs[i].groupId === gid) {
+        insertAt = i + 1;
+        break;
+      }
+    }
+    tabs.splice(insertAt, 0, row);
+  }
+
+  function stripInsertIndexFromClientX(clientX) {
+    if (tabs.length === 0) return 0;
+    for (let i = 0; i < tabs.length; i++) {
+      const r = tabs[i].tabEl.getBoundingClientRect();
+      const mid = r.left + r.width / 2;
+      if (clientX < mid) return i;
+    }
+    if (btnNewTabStrip) {
+      const br = btnNewTabStrip.getBoundingClientRect();
+      if (clientX < br.left + br.width / 2) return tabs.length;
+    }
+    return tabs.length;
+  }
+
+  function toggleTabGroupCollapsed(gid) {
+    const g = tabGroups.find((x) => x.id === gid);
+    if (!g) return;
+    g.collapsed = !g.collapsed;
+    syncTabStripDom();
+    scheduleSaveSessionSnapshot();
+  }
+
+  function openTabGroupRenameDialog(gid) {
+    hideTabContextMenu();
+    const g = tabGroups.find((x) => x.id === gid);
+    if (!g || !tabGroupRenamePanel || !tabGroupRenameInput) return;
+    tabGroupRenameGid = gid;
+    tabGroupRenameInput.value = g.label;
+    if (tabGroupRenameColor) {
+      tabGroupRenameColor.value = hexColorForColorInput(g.color);
+    }
+    tabGroupRenamePanel.hidden = false;
+    tabGroupRenamePanel.setAttribute("aria-hidden", "false");
+    queueMicrotask(() => {
+      try {
+        tabGroupRenameInput.focus();
+        tabGroupRenameInput.select();
+      } catch {
+        /* */
+      }
+    });
+  }
+
+  function closeTabGroupRenameDialog() {
+    tabGroupRenameGid = null;
+    if (tabGroupRenamePanel) {
+      tabGroupRenamePanel.hidden = true;
+      tabGroupRenamePanel.setAttribute("aria-hidden", "true");
+    }
+  }
+
+  function confirmTabGroupRename() {
+    if (!tabGroupRenameGid || !tabGroupRenameInput) {
+      closeTabGroupRenameDialog();
+      return;
+    }
+    const g = tabGroups.find((x) => x.id === tabGroupRenameGid);
+    const raw = String(tabGroupRenameInput.value || "").trim();
+    const colorVal =
+      tabGroupRenameColor && typeof tabGroupRenameColor.value === "string"
+        ? hexColorForColorInput(tabGroupRenameColor.value)
+        : "#79b8ff";
+    closeTabGroupRenameDialog();
+    if (!g || !raw) return;
+    g.label = raw;
+    g.color = colorVal;
+    syncTabStripDom();
+    scheduleSaveSessionSnapshot();
+  }
+
+  function wireTabGroupRenamePanel() {
+    if (!tabGroupRenamePanel || !tabGroupRenameInput) return;
+    if (tabGroupRenameSwatches && tabGroupRenameColor) {
+      tabGroupRenameSwatches.replaceChildren();
+      for (const hex of TAB_GROUP_PALETTE) {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "tab-group-rename-swatch";
+        b.title = hex;
+        b.style.backgroundColor = hex;
+        b.addEventListener("click", () => {
+          tabGroupRenameColor.value = hex;
+        });
+        tabGroupRenameSwatches.appendChild(b);
+      }
+    }
+    tabGroupRenameCancel?.addEventListener("click", () => closeTabGroupRenameDialog());
+    tabGroupRenameBackdrop?.addEventListener("click", () => closeTabGroupRenameDialog());
+    tabGroupRenameSave?.addEventListener("click", () => confirmTabGroupRename());
+    tabGroupRenameInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        confirmTabGroupRename();
+      }
+    });
+  }
+
+  function newTabGroupFromTab(tabId) {
+    const t = tabs.find((x) => x.id === tabId);
+    if (!t) return;
+    const gid = "tg" + ++tabGroupSeq;
+    tabGroups.push({
+      id: gid,
+      label: "Tab group",
+      color: nextTabGroupColor(tabGroups.length - 1),
+      collapsed: false,
+    });
+    t.groupId = gid;
+    syncTabStripDom();
+    scheduleSaveSessionSnapshot();
+  }
+
+  function removeTabFromGroup(tabId) {
+    const t = tabs.find((x) => x.id === tabId);
+    if (!t || !t.groupId) return;
+    t.groupId = null;
+    pruneUnusedTabGroups();
+    syncTabStripDom();
+    scheduleSaveSessionSnapshot();
+  }
+
+  function closeAllTabsInGroup(gid) {
+    const ids = tabs.filter((t) => t.groupId === gid).map((t) => t.id);
+    for (const id of ids) removeTab(id);
+  }
+
+  function ungroupAllTabsInGroup(gid) {
+    for (const t of tabs) {
+      if (t.groupId === gid) t.groupId = null;
+    }
+    tabGroups = tabGroups.filter((g) => g.id !== gid);
+    syncTabStripDom();
+    scheduleSaveSessionSnapshot();
+  }
+
+  function openGroupContextMenu(clientX, clientY, gid) {
+    if (!tabCtxMenu) return;
+    tabCtxTargetId = null;
+    tabCtxMenu.innerHTML = "";
+    const mk = (label, fn, disabled) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.textContent = label;
+      b.disabled = !!disabled;
+      b.addEventListener("click", () => {
+        hideTabContextMenu();
+        fn();
+      });
+      tabCtxMenu.appendChild(b);
+    };
+    const has = tabs.some((t) => t.groupId === gid);
+    mk("Edit group…", () => openTabGroupRenameDialog(gid), !has);
+    mk("Ungroup tabs", () => ungroupAllTabsInGroup(gid), !has);
+    mk("Close tabs in this group", () => closeAllTabsInGroup(gid), !has);
+    tabCtxMenu.hidden = false;
+    const pad = 8;
+    let x = clientX;
+    let y = clientY;
+    tabCtxMenu.style.left = "0px";
+    tabCtxMenu.style.top = "0px";
+    const mw = tabCtxMenu.offsetWidth || 200;
+    const mh = tabCtxMenu.offsetHeight || 120;
+    if (x + mw + pad > window.innerWidth) x = window.innerWidth - mw - pad;
+    if (y + mh + pad > window.innerHeight) y = window.innerHeight - mh - pad;
+    tabCtxMenu.style.left = `${Math.max(pad, x)}px`;
+    tabCtxMenu.style.top = `${Math.max(pad, y)}px`;
+  }
+
+  function hideTabContextMenu() {
+    tabCtxTargetId = null;
+    if (tabCtxMenu) {
+      tabCtxMenu.hidden = true;
+      tabCtxMenu.innerHTML = "";
+    }
+  }
+
+  function openTabContextMenu(clientX, clientY, tabId) {
+    if (!tabCtxMenu) return;
+    tabCtxTargetId = tabId;
+    const t = tabs.find((x) => x.id === tabId);
+    tabCtxMenu.innerHTML = "";
+    const mk = (label, fn, disabled) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.textContent = label;
+      b.disabled = !!disabled;
+      b.addEventListener("click", () => {
+        hideTabContextMenu();
+        fn();
+      });
+      tabCtxMenu.appendChild(b);
+    };
+    mk("New tab group", () => newTabGroupFromTab(tabId), false);
+    mk("Remove from group", () => removeTabFromGroup(tabId), !t?.groupId);
+    mk("Edit this group…", () => t?.groupId && openTabGroupRenameDialog(t.groupId), !t?.groupId);
+    mk("Close tabs in this group", () => t?.groupId && closeAllTabsInGroup(t.groupId), !t?.groupId);
+    tabCtxMenu.hidden = false;
+    const pad = 8;
+    let x = clientX;
+    let y = clientY;
+    tabCtxMenu.style.left = "0px";
+    tabCtxMenu.style.top = "0px";
+    const mw = tabCtxMenu.offsetWidth || 200;
+    const mh = tabCtxMenu.offsetHeight || 120;
+    if (x + mw + pad > window.innerWidth) x = window.innerWidth - mw - pad;
+    if (y + mh + pad > window.innerHeight) y = window.innerHeight - mh - pad;
+    tabCtxMenu.style.left = `${Math.max(pad, x)}px`;
+    tabCtxMenu.style.top = `${Math.max(pad, y)}px`;
+  }
+
+  function wireTabStripReorderAndContext() {
+    document.addEventListener(
+      "mousedown",
+      (e) => {
+        if (!tabCtxMenu || tabCtxMenu.hidden) return;
+        if (e.button !== 0) return;
+        if (e.target.closest("#tab-ctx-menu")) return;
+        hideTabContextMenu();
+      },
+      true
+    );
+    if (!tabsStrip) return;
+    tabsStrip.addEventListener("dragover", (e) => {
+      if (!Array.from(e.dataTransfer.types || []).includes(TAB_DRAG_MIME)) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+      tabStripReorderActive = true;
+      const insertBefore = stripInsertIndexFromClientX(e.clientX);
+      positionTabReorderIndicator(insertBefore);
+      clearTabGroupDragHighlight();
+      const gw = e.target.closest(".nebula-tab-group");
+      if (gw) {
+        gw.classList.add("nebula-tab-group--drag-target");
+        tabDragHighlightGroupEl = gw;
+      }
+    });
+    tabsStrip.addEventListener("dragleave", (e) => {
+      if (!tabStripReorderActive) return;
+      const rel = e.relatedTarget;
+      if (rel && tabsStrip.contains(rel)) return;
+      hideTabReorderIndicator();
+    });
+    tabsStrip.addEventListener("drop", (e) => {
+      const draggedId = e.dataTransfer.getData(TAB_DRAG_MIME);
+      if (!draggedId) return;
+      if (e.target.closest(".tab-close, .tab-media-btn")) return;
+      e.preventDefault();
+      hideTabReorderIndicator();
+      if (btnNewTabStrip && (e.target === btnNewTabStrip || btnNewTabStrip.contains(e.target))) {
+        reorderTabToIndex(draggedId, tabs.length);
+        return;
+      }
+      const groupWrap = e.target.closest(".nebula-tab-group");
+      const hitTab = e.target.closest(".tab");
+      if (groupWrap) {
+        const gid = groupWrap.dataset.groupId;
+        if (gid && tabGroups.some((g) => g.id === gid)) {
+          const tDrag = tabs.find((x) => x.id === draggedId);
+          if (tDrag) tDrag.groupId = gid;
+          if (hitTab) {
+            reorderTabToIndex(draggedId, stripInsertIndexFromClientX(e.clientX));
+          } else {
+            moveTabToEndOfGroup(draggedId, gid);
+            dedupeSplitTabGroupRuns();
+            pruneUnusedTabGroups();
+            syncTabStripDom();
+            scheduleSaveSessionSnapshot();
+          }
+          return;
+        }
+      }
+      const tDrag = tabs.find((x) => x.id === draggedId);
+      if (tDrag) tDrag.groupId = null;
+      reorderTabToIndex(draggedId, stripInsertIndexFromClientX(e.clientX));
+    });
   }
 
   function shouldOfferSessionRestore(session) {
@@ -302,14 +804,16 @@
         } catch {
           u = "";
         }
-        return { url: u };
+        return { url: u, groupId: t.groupId || null };
       });
       let ai = tabs.findIndex((x) => x.id === activeId);
       if (ai < 0) ai = 0;
+      const groups = tabGroups.filter((g) => tabs.some((t) => t.groupId === g.id));
       const data = {
-        version: 1,
+        version: 2,
         tabs: tabPayload,
         activeIndex: ai,
+        groups,
       };
       localStorage.setItem(SESSION_RESTORE_KEY, JSON.stringify(data));
     } catch {
@@ -358,16 +862,40 @@
       finishStartupWithFreshHome();
       return;
     }
-    const urls = saved.tabs.map((t) => (t && typeof t.url === "string" ? t.url : "")).filter(Boolean);
-    if (urls.length === 0) {
-      finishStartupWithFreshHome();
-      return;
+    tabGroups = [];
+    if (saved.version >= 2 && Array.isArray(saved.groups)) {
+      for (const g of saved.groups) {
+        if (!g || typeof g !== "object") continue;
+        if (typeof g.id !== "string" || typeof g.label !== "string") continue;
+        tabGroups.push({
+          id: g.id,
+          label: g.label,
+          color: typeof g.color === "string" ? g.color : nextTabGroupColor(tabGroups.length),
+          collapsed: !!g.collapsed,
+        });
+        const m = /^tg(\d+)$/.exec(g.id);
+        if (m) tabGroupSeq = Math.max(tabGroupSeq, parseInt(m[1], 10) || 0);
+      }
     }
     /** @type {{ id: string }[]} */
     const created = [];
-    for (const u of urls) {
-      created.push(createTab(u));
+    for (let i = 0; i < saved.tabs.length; i++) {
+      const row = saved.tabs[i];
+      const u = row && typeof row.url === "string" ? row.url.trim() : "";
+      if (!u) continue;
+      let gid = null;
+      if (saved.version >= 2 && row && typeof row.groupId === "string" && tabGroups.some((x) => x.id === row.groupId)) {
+        gid = row.groupId;
+      }
+      created.push(createTab(u, { groupId: gid }));
     }
+    if (created.length === 0) {
+      finishStartupWithFreshHome();
+      return;
+    }
+    dedupeSplitTabGroupRuns();
+    pruneUnusedTabGroups();
+    syncTabStripDom();
     const ai = Math.min(Math.max(0, Number(saved.activeIndex) || 0), created.length - 1);
     const pick = created[ai]?.id || created[0]?.id;
     if (pick) selectTab(pick);
@@ -2391,10 +2919,13 @@
     if (historyPanel && !historyPanel.hidden) return true;
     if (sitePermPanel && !sitePermPanel.hidden) return true;
     if (!findBar.hidden && (ae === findInput || ae?.closest?.("#find-bar"))) return true;
+    if (tabGroupRenamePanel && !tabGroupRenamePanel.hidden) return true;
+    if (tabCtxMenu && !tabCtxMenu.hidden) return true;
     return false;
   }
 
   function shouldDeferWebviewFocusFromTabAction() {
+    const ae = document.activeElement;
     if (sessionRestorePanel && !sessionRestorePanel.hidden) return true;
     if (passwordSaveOfferPanel && !passwordSaveOfferPanel.hidden) return true;
     if (permissionPromptPanel && !permissionPromptPanel.hidden) return true;
@@ -2403,10 +2934,14 @@
     if (settingsPanel && !settingsPanel.hidden) return true;
     if (historyPanel && !historyPanel.hidden) return true;
     if (sitePermPanel && !sitePermPanel.hidden) return true;
+    if (ae === urlInput || ae?.closest?.(".omnibox-wrap")) return true;
     if (!findBar.hidden) {
-      const ae = document.activeElement;
       if (ae === findInput || ae?.closest?.("#find-bar")) return true;
     }
+    if (downloadsDock && !downloadsDock.hidden && ae?.closest?.("#downloads-dock")) return true;
+    if (updateBanner && !updateBanner.hidden && ae?.closest?.("#update-banner")) return true;
+    if (tabGroupRenamePanel && !tabGroupRenamePanel.hidden) return true;
+    if (tabCtxMenu && !tabCtxMenu.hidden) return true;
     return false;
   }
 
@@ -2577,6 +3112,7 @@
         zone.classList.remove("split-drop--dragover");
         const draggedId = e.dataTransfer.getData(TAB_DRAG_MIME);
         if (!draggedId) return;
+        hideTabReorderIndicator();
         enterSplitView(draggedId, side === "left" ? "left" : "right");
       });
     }
@@ -2673,7 +3209,6 @@
     }
 
     tabs.splice(idx, 1);
-    tab.tabEl.remove();
     if (window.NebulaYoutubeAdSkip && typeof window.NebulaYoutubeAdSkip.stop === "function") {
       try {
         window.NebulaYoutubeAdSkip.stop(tab.el);
@@ -2682,6 +3217,8 @@
       }
     }
     tab.el.remove();
+    pruneUnusedTabGroups();
+    syncTabStripDom();
 
     if (activeId === id) {
       activeId = null;
@@ -3125,13 +3662,18 @@
     updateBanner.setAttribute("aria-hidden", "true");
   }
 
-  function createTab(initialUrl) {
+  function createTab(initialUrl, opts) {
     const id = "t" + ++idSeq;
     const url = initialUrl || homeUrl();
+    const optGid =
+      opts && opts.groupId && typeof opts.groupId === "string" && tabGroups.some((g) => g.id === opts.groupId)
+        ? opts.groupId
+        : null;
 
     const tabEl = document.createElement("div");
     tabEl.className = "tab";
     tabEl.dataset.tabId = id;
+    tabEl.title = "Drag to reorder · drop on a group header to join it · drop outside groups to leave · right-click for menu";
     const faviconEl = document.createElement("img");
     faviconEl.className = "tab-favicon";
     faviconEl.alt = "";
@@ -3185,6 +3727,7 @@
       tabEl,
       titleEl,
       faviconEl,
+      groupId: optGid,
       guestWcId: null,
       muteBtn,
       camBtn,
@@ -3248,11 +3791,13 @@
       }
       e.dataTransfer.effectAllowed = "move";
       e.dataTransfer.setData(TAB_DRAG_MIME, id);
+      tabStripReorderActive = true;
       showSplitDropZones();
     });
     tabEl.addEventListener("dragend", () => {
       suppressTabClickUntil = Date.now() + 280;
       hideSplitDropZones();
+      hideTabReorderIndicator();
     });
     tabEl.addEventListener("click", (e) => {
       if (Date.now() < suppressTabClickUntil) {
@@ -3262,11 +3807,12 @@
       }
       selectTab(id);
     });
-    if (btnNewTabStrip && tabsStrip.contains(btnNewTabStrip)) {
-      tabsStrip.insertBefore(tabEl, btnNewTabStrip);
-    } else {
-      tabsStrip.appendChild(tabEl);
-    }
+    tabEl.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      hideTabContextMenu();
+      openTabContextMenu(e.clientX, e.clientY, id);
+    });
 
     const el = document.createElement("webview");
     entry.el = el;
@@ -3338,6 +3884,7 @@
     });
 
     tabs.push(entry);
+    syncTabStripDom();
 
     el.addEventListener("page-favicon-updated", (e) => {
       const favs = e.favicons || (e.detail && e.detail.favicons);
@@ -3949,6 +4496,16 @@
         toggleSettingsPanel();
         return;
       }
+      if (e.key === "Escape" && tabGroupRenamePanel && !tabGroupRenamePanel.hidden) {
+        e.preventDefault();
+        closeTabGroupRenameDialog();
+        return;
+      }
+      if (e.key === "Escape" && tabCtxMenu && !tabCtxMenu.hidden) {
+        e.preventDefault();
+        hideTabContextMenu();
+        return;
+      }
       if (e.key === "Escape" && sessionRestorePanel && !sessionRestorePanel.hidden) {
         e.preventDefault();
         closeSessionRestorePanel();
@@ -4121,6 +4678,8 @@
   renderBookmarksBar();
   wireSplitDropZones();
   wireSplitResizer();
+  wireTabStripReorderAndContext();
+  wireTabGroupRenamePanel();
   window.addEventListener("beforeunload", () => {
     saveSessionSnapshot();
   });
