@@ -54,6 +54,24 @@ app.commandLine.appendSwitch("disk-cache-size", String(128 * 1024 * 1024));
 app.commandLine.appendSwitch("disable-quic");
 
 /**
+ * Auto dark theme for web contents (Chromium). Must be set before the app is ready; toggling in
+ * Settings saves the flag and offers a restart so this switch applies on the next launch.
+ */
+function readForceDarkModeFromSettingsFile() {
+  try {
+    const p = path.join(app.getPath("userData"), "nebula-settings.json");
+    const raw = fs.readFileSync(p, "utf8");
+    const j = JSON.parse(raw);
+    return j && j.forceDarkMode === true;
+  } catch {
+    return false;
+  }
+}
+if (readForceDarkModeFromSettingsFile()) {
+  app.commandLine.appendSwitch("enable-features", "WebContentsForceDark");
+}
+
+/**
  * Picture-in-picture: Chromium opens a floating, resizable window (OS / compositor keeps it on top).
  * @param {boolean} useClickPoint
  * @param {number} cx
@@ -711,7 +729,13 @@ ipcMain.handle("nebula-context-menu", (event, payload) => {
     template.push({ type: "separator" });
   }
 
-  if (selectionText && selectionText.length > 0) {
+  if (selectionText && selectionText.trim().length > 0) {
+    template.push({
+      label: "Read aloud",
+      click: () => {
+        win.webContents.send("nebula-context-action", { type: "read-aloud", text: selectionText });
+      },
+    });
     template.push({
       label: "Copy",
       click: () => {
@@ -931,6 +955,12 @@ ipcMain.handle("nebula-guest-click", (_e, payload) => {
 
 const DEFAULT_SETTINGS = {
   adblockEnabled: true,
+  /** Chromium WebContentsForceDark — applied at process start when true (see commandLine above). */
+  forceDarkMode: false,
+  /** `google-wrap` = navigate to Google’s translate URL; `libre` = in-page via LibreTranslate / optional DeepL key in vault. */
+  translateEngine: "google-wrap",
+  /** Base URL for LibreTranslate (no trailing slash). */
+  translateLibreUrl: "https://libretranslate.com",
   searchSuggestions: {
     layerOrder: ["past", "local", "remote"],
     enablePastSearch: true,
@@ -1001,6 +1031,13 @@ function normalizeSettings(s) {
   if (typeof ss.enableHistory !== "boolean") ss.enableHistory = true;
   if (typeof ss.enableDuckDuckGo !== "boolean") ss.enableDuckDuckGo = true;
   if (typeof o.adblockEnabled !== "boolean") o.adblockEnabled = true;
+  if (typeof o.forceDarkMode !== "boolean") o.forceDarkMode = false;
+  if (o.translateEngine !== "libre" && o.translateEngine !== "google-wrap") {
+    o.translateEngine = DEFAULT_SETTINGS.translateEngine;
+  }
+  let tlu = typeof o.translateLibreUrl === "string" ? o.translateLibreUrl.trim() : "";
+  if (!tlu) tlu = DEFAULT_SETTINGS.translateLibreUrl;
+  o.translateLibreUrl = tlu.slice(0, 512);
   return o;
 }
 
@@ -1027,6 +1064,240 @@ ipcMain.handle("nebula-set-settings", (_e, patch) => {
   saveSettings(next);
   nebulaAdblock.applyAdblockFromSettings(next, WEB_PARTITION);
   return next;
+});
+
+ipcMain.handle("nebula-relaunch-app", () => {
+  setImmediate(() => {
+    try {
+      app.relaunch();
+    } catch {
+      /* */
+    }
+    app.exit(0);
+  });
+  return true;
+});
+
+const NEBULA_TRANSLATION_VAULT_URL = "https://nebula.settings/translation";
+
+function isNebulaTranslationVaultEntry(e) {
+  if (!e || typeof e !== "object") return false;
+  const u = typeof e.url === "string" ? e.url : "";
+  return u === NEBULA_TRANSLATION_VAULT_URL || u.startsWith("https://nebula.settings/translation");
+}
+
+function normalizeLibreTranslateBaseUrl(raw) {
+  const fallback = "https://libretranslate.com";
+  const s = typeof raw === "string" && raw.trim() ? raw.trim() : fallback;
+  try {
+    const u = new URL(s.includes("://") ? s : `https://${s}`);
+    if (u.protocol !== "http:" && u.protocol !== "https:") return fallback;
+    let out = u.origin;
+    if (u.pathname && u.pathname !== "/") {
+      out += u.pathname.replace(/\/$/, "");
+    }
+    return out.slice(0, 512) || fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function getTranslationVaultEntryRow() {
+  const entries = loadVaultEntries();
+  return entries.find((e) => isNebulaTranslationVaultEntry(e)) || null;
+}
+
+function getTranslationSecretsForApi() {
+  if (hasNebulaLocalAccount() && !isNebulaVaultSecretsUnlocked()) {
+    return { locked: true, apiKey: "", provider: "libre" };
+  }
+  const row = getTranslationVaultEntryRow();
+  if (!row) return { locked: false, apiKey: "", provider: "libre" };
+  const prov = (row.username || "libre").toLowerCase() === "deepl" ? "deepl" : "libre";
+  const apiKey = typeof row.password === "string" ? row.password : "";
+  return { locked: false, apiKey, provider: prov };
+}
+
+function toDeepLTargetLang(code) {
+  const c = String(code || "en")
+    .toLowerCase()
+    .replace(/_/g, "-");
+  const map = {
+    en: "EN",
+    de: "DE",
+    fr: "FR",
+    es: "ES",
+    it: "IT",
+    pt: "PT-PT",
+    ru: "RU",
+    ja: "JA",
+    ko: "KO",
+    "zh-cn": "ZH",
+    "zh-tw": "ZH",
+    ar: "AR",
+    hi: "HI",
+    nl: "NL",
+    pl: "PL",
+    sv: "SV",
+    tr: "TR",
+    vi: "VI",
+    th: "TH",
+    id: "ID",
+    uk: "UK",
+    cs: "CS",
+    da: "DA",
+    fi: "FI",
+    no: "NB",
+    he: "HE",
+    ro: "RO",
+    hu: "HU",
+    el: "EL",
+    ms: "MS",
+    fil: "FIL",
+    bn: "BN",
+    ta: "TA",
+    sw: "SW",
+  };
+  if (map[c]) return map[c];
+  const base = c.split("-")[0];
+  return map[base] || "EN";
+}
+
+async function translateTextsWithLibre(baseUrl, texts, target, apiKey) {
+  const base = normalizeLibreTranslateBaseUrl(baseUrl);
+  const out = [];
+  for (let i = 0; i < texts.length; i++) {
+    const q = texts[i];
+    const body = { q, source: "auto", target, format: "text" };
+    if (apiKey) body.api_key = apiKey;
+    const r = await fetch(`${base}/translate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) {
+      const errText = await r.text().catch(() => "");
+      throw new Error(`LibreTranslate ${r.status}: ${errText.slice(0, 200)}`);
+    }
+    const j = await r.json();
+    out.push(typeof j.translatedText === "string" ? j.translatedText : q);
+    if (i < texts.length - 1) {
+      await new Promise((res) => setTimeout(res, 110));
+    }
+  }
+  return out;
+}
+
+async function translateTextsWithDeepLFree(texts, target, authKey) {
+  const tl = toDeepLTargetLang(target);
+  const key = String(authKey || "").trim();
+  if (!key) throw new Error("DeepL: missing API key");
+  /** Try Free host first, then Pro — keys are tied to one product. */
+  const candidates = ["https://api-free.deepl.com", "https://api.deepl.com"];
+  const authHeader = `DeepL-Auth-Key ${key}`;
+  const batchSize = 50;
+  let lastErr = null;
+  for (const base of candidates) {
+    try {
+      const out = [];
+      for (let i = 0; i < texts.length; i += batchSize) {
+        const chunk = texts.slice(i, i + batchSize);
+        const r = await fetch(`${base}/v2/translate`, {
+          method: "POST",
+          headers: {
+            Authorization: authHeader,
+            "Content-Type": "application/json",
+            Accept: "application/json",
+          },
+          body: JSON.stringify({ text: chunk, target_lang: tl }),
+        });
+        if (!r.ok) {
+          const errText = await r.text().catch(() => "");
+          throw new Error(`DeepL ${r.status}: ${errText.slice(0, 280)}`);
+        }
+        const j = await r.json();
+        const arr = Array.isArray(j.translations) ? j.translations : [];
+        for (const x of arr) {
+          out.push(typeof x.text === "string" ? x.text : "");
+        }
+        if (arr.length !== chunk.length) {
+          throw new Error(`DeepL: expected ${chunk.length} translations, got ${arr.length}`);
+        }
+      }
+      return out;
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  throw lastErr || new Error("DeepL translation failed.");
+}
+
+ipcMain.handle("nebula-translation-status", () => {
+  const row = getTranslationVaultEntryRow();
+  const sec = getTranslationSecretsForApi();
+  if (sec.locked) {
+    return { locked: true, hasKey: !!row, provider: row ? (row.username || "libre").toLowerCase() : "libre" };
+  }
+  return {
+    locked: false,
+    hasKey: !!(row && typeof row.password === "string" && row.password.length > 0),
+    provider: (row && row.username ? String(row.username) : "libre").toLowerCase() === "deepl" ? "deepl" : "libre",
+  };
+});
+
+ipcMain.handle("nebula-translation-save-key", (_e, payload) => {
+  if (hasNebulaLocalAccount() && !isNebulaVaultSecretsUnlocked()) {
+    return { ok: false, locked: true };
+  }
+  const apiKey = typeof payload?.apiKey === "string" ? payload.apiKey.trim() : "";
+  const providerRaw = typeof payload?.provider === "string" ? payload.provider.toLowerCase() : "libre";
+  const provider = providerRaw === "deepl" ? "deepl" : "libre";
+  const entries = loadVaultEntries();
+  const idx = entries.findIndex((e) => isNebulaTranslationVaultEntry(e));
+  if (!apiKey) {
+    if (idx >= 0) {
+      entries.splice(idx, 1);
+      saveVaultEntries(entries);
+    }
+    return { ok: true, cleared: true };
+  }
+  const now = Date.now();
+  const row = {
+    id: idx >= 0 ? entries[idx].id : crypto.randomUUID(),
+    url: NEBULA_TRANSLATION_VAULT_URL,
+    origin: "https://nebula.settings",
+    title: "Translation API key (Nebula)",
+    username: provider,
+    password: apiKey,
+    notes: "Used for in-page translation only. Hidden from the password list.",
+    createdAt: idx >= 0 ? entries[idx].createdAt : now,
+    updatedAt: now,
+  };
+  if (idx >= 0) entries[idx] = row;
+  else entries.unshift(row);
+  saveVaultEntries(entries);
+  return { ok: true };
+});
+
+ipcMain.handle("nebula-translation-translate-texts", async (_e, payload) => {
+  const texts = payload && Array.isArray(payload.texts) ? payload.texts.filter((t) => typeof t === "string") : [];
+  const target = typeof payload?.target === "string" ? payload.target.trim().toLowerCase() : "en";
+  if (!texts.length) return { ok: false, error: "empty" };
+  if (texts.length > 400) return { ok: false, error: "too_many" };
+  const settings = loadSettings();
+  const sec = getTranslationSecretsForApi();
+  if (sec.locked) return { ok: false, error: "vault_locked" };
+  try {
+    let translated;
+    if (sec.provider === "deepl" && sec.apiKey) {
+      translated = await translateTextsWithDeepLFree(texts, target, sec.apiKey);
+    } else {
+      translated = await translateTextsWithLibre(settings.translateLibreUrl, texts, target, sec.apiKey);
+    }
+    return { ok: true, translated };
+  } catch (err) {
+    return { ok: false, error: String(err && err.message ? err.message : err) };
+  }
 });
 
 const SITE_PERM_KEYS = new Set([
@@ -1695,6 +1966,7 @@ function safeImportedVaultEntry(raw, now) {
   if (!raw || typeof raw !== "object") return null;
   const urlRaw = typeof raw.url === "string" ? raw.url.trim() : "";
   if (!urlRaw) return null;
+  if (urlRaw.includes("nebula.settings/translation")) return null;
   let url = urlRaw;
   let origin = "";
   try {
@@ -1725,9 +1997,10 @@ ipcMain.handle("nebula-vault-export-json-file", async (event, payload) => {
   const win = BrowserWindow.fromWebContents(event.sender);
   const entries = loadVaultEntries();
   const includePw = !(payload && payload.includePasswords === false);
+  const entriesFiltered = entries.filter((e) => !isNebulaTranslationVaultEntry(e));
   const entriesOut = includePw
-    ? entries
-    : entries.map((e) => {
+    ? entriesFiltered
+    : entriesFiltered.map((e) => {
         const hasPass = typeof e.password === "string" && e.password.length > 0;
         return { ...e, password: "", passwordPresent: hasPass };
       });
@@ -1750,7 +2023,7 @@ ipcMain.handle("nebula-vault-export-json-file", async (event, payload) => {
   if (result.canceled || !result.filePath) return { ok: false, canceled: true };
   try {
     fs.writeFileSync(result.filePath, text, "utf8");
-    return { ok: true, path: result.filePath, count: entries.length, redacted: !includePw };
+    return { ok: true, path: result.filePath, count: entriesOut.length, redacted: !includePw };
   } catch (err) {
     return { ok: false, error: String(err?.message || err) };
   }
@@ -2673,6 +2946,11 @@ function registerAppMenu() {
       label: "Picture in picture",
       accelerator: "CmdOrCtrl+Shift+P",
       click: (_e, bw) => dispatchAction(bw, "picture-in-picture"),
+    },
+    {
+      label: "Read selection aloud",
+      accelerator: "CmdOrCtrl+Shift+U",
+      click: (_e, bw) => dispatchAction(bw, "read-selection-aloud"),
     },
     {
       label: "Check for updates…",

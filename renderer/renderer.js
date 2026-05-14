@@ -10,6 +10,141 @@
   /** Must match main.js WEB_PARTITION — persistent cookies & login across tabs and restarts. */
   const WEB_PARTITION = "persist:nebula";
 
+  /** Guest page: selection + input/textarea selection (trimmed). */
+  const READ_SELECTION_JS = `(function(){
+    try {
+      var t = "";
+      var sel = window.getSelection && window.getSelection();
+      if (sel && sel.toString) t = sel.toString() || "";
+      if (t && t.trim().length > 0) return t.trim();
+      var ae = document.activeElement;
+      if (ae && (ae.tagName === "INPUT" || ae.tagName === "TEXTAREA") && typeof ae.selectionStart === "number") {
+        var ins = ae.value != null ? String(ae.value) : "";
+        var a = ae.selectionStart | 0, b = ae.selectionEnd | 0;
+        if (b > a) {
+          var slice = ins.substring(a, b);
+          if (slice && slice.trim().length > 0) return slice.trim();
+        }
+      }
+    } catch (err) {}
+    return "";
+  })()`;
+
+  const READ_ALOUD_MAX_CHARS = 32000;
+
+  const TRANSLATE_LANG_OPTIONS = [
+    { code: "en", label: "English" },
+    { code: "es", label: "Spanish" },
+    { code: "de", label: "German" },
+    { code: "fr", label: "French" },
+    { code: "it", label: "Italian" },
+    { code: "pt", label: "Portuguese" },
+    { code: "ru", label: "Russian" },
+    { code: "ja", label: "Japanese" },
+    { code: "ko", label: "Korean" },
+    { code: "zh-CN", label: "Chinese (Simplified)" },
+    { code: "zh-TW", label: "Chinese (Traditional)" },
+    { code: "ar", label: "Arabic" },
+    { code: "hi", label: "Hindi" },
+    { code: "nl", label: "Dutch" },
+    { code: "pl", label: "Polish" },
+    { code: "sv", label: "Swedish" },
+    { code: "tr", label: "Turkish" },
+    { code: "vi", label: "Vietnamese" },
+    { code: "th", label: "Thai" },
+    { code: "id", label: "Indonesian" },
+    { code: "uk", label: "Ukrainian" },
+    { code: "cs", label: "Czech" },
+    { code: "da", label: "Danish" },
+    { code: "fi", label: "Finnish" },
+    { code: "no", label: "Norwegian" },
+    { code: "he", label: "Hebrew" },
+    { code: "ro", label: "Romanian" },
+    { code: "hu", label: "Hungarian" },
+    { code: "el", label: "Greek" },
+    { code: "ms", label: "Malay" },
+    { code: "fil", label: "Filipino" },
+    { code: "bn", label: "Bengali" },
+    { code: "ta", label: "Tamil" },
+    { code: "sw", label: "Swahili" },
+  ];
+
+  const INPAGE_TRANSLATE_COLLECT_JS = `(function(){
+    function skip(name){
+      var u=(name||"").toUpperCase();
+      return u==="SCRIPT"||u==="STYLE"||u==="NOSCRIPT"||u==="SVG"||u==="CODE"||u==="PRE"||u==="TEXTAREA";
+    }
+    function visit(node,arr){
+      if(!node)return;
+      if(node.nodeType===3){
+        var p=node.parentElement;
+        if(!p||skip(p.tagName))return;
+        var v=node.nodeValue;
+        if(!v||!String(v).trim()||String(v).replace(/\\s+/g,"").length<2)return;
+        arr.push(v);
+        return;
+      }
+      if(node.nodeType===1){
+        var el=node;
+        if(el.shadowRoot)visit(el.shadowRoot,arr);
+        for(var c=el.firstChild;c;c=c.nextSibling)visit(c,arr);
+      }
+      if(node.nodeType===11){
+        for(var k=0;k<node.childNodes.length;k++)visit(node.childNodes[k],arr);
+      }
+    }
+    var all=[];
+    visit(document.documentElement,all);
+    var strings=[],total=0,MAXN=300,MAXC=42000;
+    for(var i=0;i<all.length&&strings.length<MAXN&&total<MAXC;i++){
+      var s=all[i];
+      if(total+s.length>MAXC)break;
+      strings.push(s);total+=s.length;
+    }
+    try{sessionStorage.setItem("nebulaTrOrig",JSON.stringify(strings));}catch(e){}
+    return strings;
+  })()`;
+
+  const INPAGE_TRANSLATE_REVERT_JS = `(function(){
+    try{
+      var raw=sessionStorage.getItem("nebulaTrOrig");
+      if(!raw)return false;
+      var orig=JSON.parse(raw);
+      var idx=0;
+      function skip(name){
+        var u=(name||"").toUpperCase();
+        return u==="SCRIPT"||u==="STYLE"||u==="NOSCRIPT"||u==="SVG"||u==="CODE"||u==="PRE"||u==="TEXTAREA";
+      }
+      function walk(node){
+        if(!node)return;
+        if(node.nodeType===3){
+          var p=node.parentElement;
+          if(!p||skip(p.tagName))return;
+          var v=node.nodeValue;
+          if(!v||!String(v).trim()||String(v).replace(/\\s+/g,"").length<2)return;
+          if(idx<orig.length){node.nodeValue=orig[idx];idx++;}
+          return;
+        }
+        if(node.nodeType===1){
+          var el=node;
+          if(el.shadowRoot)walk(el.shadowRoot);
+          for(var c=el.firstChild;c;c=c.nextSibling)walk(c);
+        }
+        if(node.nodeType===11){
+          for(var k=0;k<node.childNodes.length;k++)walk(node.childNodes[k]);
+        }
+      }
+      walk(document.documentElement);
+      sessionStorage.removeItem("nebulaTrOrig");
+      return true;
+    }catch(e){return false;}
+  })()`;
+
+  function buildInpageTranslateApplyJs(translated) {
+    const inner = JSON.stringify(translated);
+    return `(function(){try{var trans=JSON.parse(${JSON.stringify(inner)});function skip(name){var u=(name||"").toUpperCase();return u==="SCRIPT"||u==="STYLE"||u==="NOSCRIPT"||u==="SVG"||u==="CODE"||u==="PRE"||u==="TEXTAREA";}var idx=0;function walk(node){if(!node)return;if(node.nodeType===3){var p=node.parentElement;if(!p||skip(p.tagName))return;var v=node.nodeValue;if(!v||!String(v).trim()||String(v).replace(/\\s+/g,"").length<2)return;if(idx<trans.length){node.nodeValue=trans[idx];idx++;}return;}if(node.nodeType===1){var el=node;if(el.shadowRoot)walk(el.shadowRoot);for(var c=el.firstChild;c;c=c.nextSibling)walk(c);}if(node.nodeType===11){for(var k=0;k<node.childNodes.length;k++)walk(node.childNodes[k]);}}walk(document.documentElement);return true;}catch(e){return false;}})()`;
+  }
+
   const ZOOM_MIN = 0.5;
   const ZOOM_MAX = 3;
   const ZOOM_STEP = 1.12;
@@ -132,11 +267,17 @@
   const nebulaAccountRemoveBtn = document.getElementById("nebula-account-remove-btn");
   const nebulaAccountLockNowBtn = document.getElementById("nebula-account-lock-now-btn");
   const nebulaAccountSettingsMsg = document.getElementById("nebula-account-settings-msg");
+  const btnTranslate = document.getElementById("btn-translate");
+  const translatePanel = document.getElementById("translate-panel");
+  const translatePanelLang = document.getElementById("translate-panel-lang");
+  const translatePanelGo = document.getElementById("translate-panel-go");
+  const translatePanelOriginal = document.getElementById("translate-panel-original");
+  const translateDropdownWrap = document.querySelector(".translate-dropdown-wrap");
 
   /** @type {Map<string, HTMLElement>} */
   const downloadElById = new Map();
 
-  /** @type {{ id: string, el: Electron.WebviewTag | null, tabEl: HTMLElement, titleEl: HTMLElement, faviconEl: HTMLImageElement, groupId: string | null, guestWcId: number | null, muteBtn: HTMLButtonElement, camBtn: HTMLButtonElement, micBtn: HTMLButtonElement, mediaStrip: HTMLElement, mediaState: { audible: boolean, audioMuted: boolean, camera: boolean, microphone: boolean } }[]} */
+  /** @type {{ id: string, el: Electron.WebviewTag | null, tabEl: HTMLElement, titleEl: HTMLElement, faviconEl: HTMLImageElement, groupId: string | null, guestWcId: number | null, translateBackUrl: string | null, translateInPageActive: boolean, muteBtn: HTMLButtonElement, camBtn: HTMLButtonElement, micBtn: HTMLButtonElement, mediaStrip: HTMLElement, mediaState: { audible: boolean, audioMuted: boolean, camera: boolean, microphone: boolean } }[]} */
   let tabs = [];
   let activeId = null;
   let idSeq = 0;
@@ -179,6 +320,9 @@
   let omniboxSelectedIndex = -1;
   const DEFAULT_APP_SETTINGS = {
     adblockEnabled: true,
+    forceDarkMode: false,
+    translateEngine: "google-wrap",
+    translateLibreUrl: "https://libretranslate.com",
     searchSuggestions: {
       layerOrder: ["past", "local", "remote"],
       enablePastSearch: true,
@@ -206,6 +350,12 @@
     const o = raw && typeof raw === "object" ? raw : {};
     const merged = {
       adblockEnabled: o.adblockEnabled !== false,
+      forceDarkMode: o.forceDarkMode === true,
+      translateEngine: o.translateEngine === "libre" ? "libre" : "google-wrap",
+      translateLibreUrl:
+        typeof o.translateLibreUrl === "string" && o.translateLibreUrl.trim()
+          ? o.translateLibreUrl.trim().slice(0, 512)
+          : DEFAULT_APP_SETTINGS.translateLibreUrl,
       searchSuggestions: {
         ...DEFAULT_APP_SETTINGS.searchSuggestions,
         ...(o.searchSuggestions && typeof o.searchSuggestions === "object" ? o.searchSuggestions : {}),
@@ -240,12 +390,22 @@
       try {
         const s = await window.nebula.getSettings();
         appSettings = normalizeAppSettings(s);
+        syncYoutubeAdSkipAdblockState();
         return;
       } catch {
         /* */
       }
     }
     appSettings = normalizeAppSettings(DEFAULT_APP_SETTINGS);
+    syncYoutubeAdSkipAdblockState();
+  }
+
+  function syncYoutubeAdSkipAdblockState() {
+    if (window.NebulaYoutubeAdSkip && typeof window.NebulaYoutubeAdSkip.configure === "function") {
+      window.NebulaYoutubeAdSkip.configure({
+        getAdblockBlockingEnabled: () => appSettings.adblockEnabled !== false,
+      });
+    }
   }
 
   function homeUrl() {
@@ -1546,6 +1706,12 @@
     return entry.passwordPresent === true;
   }
 
+  function vaultEntryIsNebulaInternalTranslation(e) {
+    if (!e || typeof e !== "object") return false;
+    const u = typeof e.url === "string" ? e.url : "";
+    return u.includes("nebula.settings/translation");
+  }
+
   function renderVaultList() {
     if (!vaultListEl) return;
     const q = (vaultSearchInput?.value || "").trim().toLowerCase();
@@ -1556,6 +1722,7 @@
           const hay = `${e.title || ""} ${e.username || ""} ${e.url || ""} ${e.origin || ""}`.toLowerCase();
           return hay.includes(q);
         });
+    list = list.filter((e) => !vaultEntryIsNebulaInternalTranslation(e));
     if (vaultListFilter === "session") {
       list = list.filter((e) => vaultEntryIsSessionPlaceholderEntry(e));
     } else if (vaultListFilter === "login") {
@@ -1917,6 +2084,7 @@
     if (settingsPanel && !settingsPanel.hidden) closeSettingsPanel();
     if (sitePermPanel && !sitePermPanel.hidden) closeSitePermissionsPanel();
     hideOmniboxSuggestions();
+    closeTranslatePanel();
     historyPanel.hidden = false;
     historyPanel.setAttribute("aria-hidden", "false");
     renderHistoryList();
@@ -2094,11 +2262,44 @@
     return e.ctrlKey || e.metaKey;
   }
 
+  async function refreshTranslationKeyStatus() {
+    const el = document.getElementById("settings-translate-key-status");
+    if (!el) return;
+    try {
+      const s = await window.nebula?.translationStatus?.();
+      if (!s) {
+        el.textContent = "";
+        return;
+      }
+      if (s.locked) {
+        el.textContent =
+          "Saved passwords vault is locked — unlock it to save or use a translation API key.";
+        return;
+      }
+      if (s.hasKey) {
+        el.textContent =
+          "A translation API key is stored in the vault (" +
+          (s.provider === "deepl" ? "DeepL" : "LibreTranslate") +
+          "). It is never shown here.";
+      } else {
+        el.textContent = "No translation API key in the vault (optional).";
+      }
+    } catch {
+      el.textContent = "";
+    }
+  }
+
   function populateSettingsForm() {
     const s = appSettings;
     const ss = s.searchSuggestions;
     const adEl = document.getElementById("settings-adblock-enabled");
     if (adEl) adEl.checked = s.adblockEnabled !== false;
+    const fdEl = document.getElementById("settings-force-dark-mode");
+    if (fdEl) fdEl.checked = s.forceDarkMode === true;
+    const teEl = document.getElementById("settings-translate-engine");
+    if (teEl) teEl.value = s.translateEngine === "libre" ? "libre" : "google-wrap";
+    const tluEl = document.getElementById("settings-translate-libre-url");
+    if (tluEl) tluEl.value = s.translateLibreUrl || DEFAULT_APP_SETTINGS.translateLibreUrl;
     const el = (id, v) => {
       const n = document.getElementById(id);
       if (n) n.value = String(v);
@@ -2155,6 +2356,12 @@
     }
     return {
       adblockEnabled: !!(document.getElementById("settings-adblock-enabled")?.checked),
+      forceDarkMode: !!(document.getElementById("settings-force-dark-mode")?.checked),
+      translateEngine:
+        (document.getElementById("settings-translate-engine")?.value || "google-wrap") === "libre"
+          ? "libre"
+          : "google-wrap",
+      translateLibreUrl: String(document.getElementById("settings-translate-libre-url")?.value || "").trim(),
       searchSuggestions: {
         enablePastSearch: chk("settings-ss-past"),
         enableBookmarks: chk("settings-ss-bookmarks"),
@@ -2186,6 +2393,7 @@
     rejectActivePermissionIfAny();
     closePasswordSaveOfferPanel();
     closeVaultPanel();
+    closeTranslatePanel();
     if (!findBar.hidden) closeFindBar();
     if (historyPanel && !historyPanel.hidden) closeHistoryPanel();
     if (sitePermPanel && !sitePermPanel.hidden) closeSitePermissionsPanel();
@@ -2195,6 +2403,7 @@
     settingsPanel.setAttribute("aria-hidden", "false");
     void refreshNebulaAccountSettingsUI();
     void refreshAboutSection();
+    void refreshTranslationKeyStatus();
     queueMicrotask(() => document.getElementById("settings-adblock-enabled")?.focus());
   }
 
@@ -2205,6 +2414,7 @@
   }
 
   async function saveSettingsFromForm() {
+    const prevForceDark = appSettings.forceDarkMode === true;
     const patch = gatherSettingsPatchFromForm();
     if (window.nebula?.setSettings) {
       try {
@@ -2216,8 +2426,20 @@
     } else {
       appSettings = normalizeAppSettings({ ...appSettings, ...patch });
     }
+    syncYoutubeAdSkipAdblockState();
     closeSettingsPanel();
     refreshOmniboxSuggestions();
+    void refreshTranslationKeyStatus();
+    const nextForceDark = appSettings.forceDarkMode === true;
+    if (prevForceDark !== nextForceDark && typeof window.nebula?.relaunchApp === "function") {
+      if (
+        window.confirm(
+          "Restart Nebula now to apply forced dark mode for website content? Chromium only applies this at startup."
+        )
+      ) {
+        void window.nebula.relaunchApp();
+      }
+    }
   }
 
   function historyShortcutMatch(e) {
@@ -3296,6 +3518,7 @@
     if (settingsPanel && !settingsPanel.hidden) closeSettingsPanel();
     if (sitePermPanel && !sitePermPanel.hidden) closeSitePermissionsPanel();
     hideOmniboxSuggestions();
+    closeTranslatePanel();
     findBar.hidden = false;
     findInput.focus();
     findInput.select();
@@ -3662,6 +3885,219 @@
     updateBanner.setAttribute("aria-hidden", "true");
   }
 
+  const GOOGLE_TRANSLATE_HOST_RE = /(^|\.)translate\.google\.com$/i;
+
+  function ensureTranslateLangSelect() {
+    if (!translatePanelLang || translatePanelLang.dataset.nebulaReady === "1") return;
+    translatePanelLang.dataset.nebulaReady = "1";
+    const frag = document.createDocumentFragment();
+    for (const row of TRANSLATE_LANG_OPTIONS) {
+      const opt = document.createElement("option");
+      opt.value = row.code;
+      opt.textContent = row.label;
+      frag.appendChild(opt);
+    }
+    translatePanelLang.appendChild(frag);
+    const pref = (navigator.language || "en").replace(/_/g, "-").toLowerCase();
+    const codes = new Set(TRANSLATE_LANG_OPTIONS.map((x) => x.code));
+    let pick = codes.has(pref) ? pref : "";
+    if (!pick && pref.includes("-")) {
+      const base = pref.split("-")[0];
+      if (codes.has(base)) pick = base;
+    }
+    if (!pick) pick = "es";
+    translatePanelLang.value = pick;
+  }
+
+  function translatePanelIsOpen() {
+    return !!(translatePanel && !translatePanel.hidden);
+  }
+
+  function setTranslatePanelOpen(open) {
+    if (!translatePanel || !btnTranslate) return;
+    translatePanel.hidden = !open;
+    btnTranslate.setAttribute("aria-expanded", open ? "true" : "false");
+    if (open) {
+      ensureTranslateLangSelect();
+      const hint = document.getElementById("translate-panel-hint");
+      if (hint) {
+        hint.textContent =
+          appSettings.translateEngine === "libre"
+            ? "In-page: LibreTranslate (or DeepL if your vault key is set to DeepL). Page stays on this site. Unlock the vault if a key is saved and the vault is locked."
+            : "Loads the page through Google Translate. The page URL is sent to Google.";
+      }
+    }
+  }
+
+  function toggleTranslatePanel() {
+    setTranslatePanelOpen(!translatePanelIsOpen());
+  }
+
+  function closeTranslatePanel() {
+    setTranslatePanelOpen(false);
+  }
+
+  function isHttpLikePageUrl(urlStr) {
+    if (!urlStr || typeof urlStr !== "string") return false;
+    try {
+      const u = new URL(urlStr);
+      return u.protocol === "http:" || u.protocol === "https:";
+    } catch {
+      return false;
+    }
+  }
+
+  function extractEmbeddedUrlFromGoogleTranslate(currentUrl) {
+    try {
+      const u = new URL(currentUrl);
+      if (!GOOGLE_TRANSLATE_HOST_RE.test(u.hostname)) return "";
+      const up = u.searchParams.get("u");
+      if (!up) return "";
+      return decodeURIComponent(up);
+    } catch {
+      return "";
+    }
+  }
+
+  function buildGoogleTranslateWrapUrl(pageUrl, targetLang) {
+    const raw = String(targetLang || "en")
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z-]/g, "");
+    const tl = TRANSLATE_LANG_OPTIONS.some((x) => x.code === raw) ? raw : "en";
+    return `https://translate.google.com/translate?sl=auto&tl=${encodeURIComponent(tl)}&hl=en&u=${encodeURIComponent(pageUrl)}`;
+  }
+
+  function resolveTranslateSourceUrl(tab) {
+    if (!tab || !tab.el) return "";
+    let cur = "";
+    try {
+      cur = tab.el.getURL() || "";
+    } catch {
+      return "";
+    }
+    if (!cur) return "";
+    let host = "";
+    try {
+      host = new URL(cur).hostname;
+    } catch {
+      return "";
+    }
+    if (GOOGLE_TRANSLATE_HOST_RE.test(host)) {
+      return extractEmbeddedUrlFromGoogleTranslate(cur) || tab.translateBackUrl || "";
+    }
+    if (isHttpLikePageUrl(cur) && !isWelcomePageUrl(cur)) return cur;
+    return "";
+  }
+
+  async function runTranslateLibreInPage(tab) {
+    const w = tab.el;
+    if (!w) return;
+    let cur = "";
+    try {
+      cur = w.getURL() || "";
+    } catch {
+      return;
+    }
+    if (!isHttpLikePageUrl(cur) || isWelcomePageUrl(cur)) {
+      alert("Open an ordinary http(s) page first (not the home or welcome screen).");
+      return;
+    }
+    const tl = translatePanelLang?.value || "en";
+    let texts;
+    try {
+      texts = await w.executeJavaScript(INPAGE_TRANSLATE_COLLECT_JS, true);
+    } catch {
+      alert("Could not read text from this page.");
+      return;
+    }
+    if (!Array.isArray(texts) || texts.length === 0) {
+      alert("No translatable text found on this page.");
+      return;
+    }
+    const r = await window.nebula?.translationTranslateTexts?.({ texts, target: tl });
+    if (!r || !r.ok) {
+      if (r && r.error === "vault_locked") {
+        alert("Unlock Saved passwords to use your stored translation API key.");
+      } else {
+        alert(r && r.error ? String(r.error) : "Translation failed.");
+      }
+      return;
+    }
+    const translated = r.translated;
+    if (!Array.isArray(translated) || translated.length !== texts.length) {
+      alert("Translation returned an unexpected result.");
+      return;
+    }
+    const applyJs = buildInpageTranslateApplyJs(translated);
+    try {
+      await w.executeJavaScript(applyJs, true);
+    } catch {
+      alert("Could not apply translation to the page.");
+      return;
+    }
+    tab.translateInPageActive = true;
+  }
+
+  function runTranslateForActiveTab() {
+    const tab = tabs.find((t) => t.id === activeId);
+    if (!tab || !tab.el) return;
+    if (appSettings.translateEngine === "libre") {
+      void runTranslateLibreInPage(tab).then(() => closeTranslatePanel());
+      return;
+    }
+    const source = resolveTranslateSourceUrl(tab);
+    if (!source || !isHttpLikePageUrl(source)) {
+      alert("Open an ordinary http(s) page first (not the home or welcome screen).");
+      return;
+    }
+    const tl = translatePanelLang?.value || "en";
+    tab.translateBackUrl = source;
+    try {
+      tab.el.loadURL(buildGoogleTranslateWrapUrl(source, tl));
+    } catch {
+      alert("Could not start translation.");
+      return;
+    }
+    closeTranslatePanel();
+  }
+
+  function viewOriginalForActiveTab() {
+    const tab = tabs.find((t) => t.id === activeId);
+    if (!tab || !tab.el) return;
+    if (tab.translateInPageActive) {
+      void (async () => {
+        try {
+          await tab.el.executeJavaScript(INPAGE_TRANSLATE_REVERT_JS, true);
+        } catch {
+          /* */
+        }
+        tab.translateInPageActive = false;
+        closeTranslatePanel();
+      })();
+      return;
+    }
+    let back = tab.translateBackUrl;
+    if (!isHttpLikePageUrl(back)) {
+      try {
+        back = extractEmbeddedUrlFromGoogleTranslate(tab.el.getURL() || "");
+      } catch {
+        back = "";
+      }
+    }
+    if (!back || !isHttpLikePageUrl(back)) {
+      alert("No original page is available. Open a normal page and use Translate, or go back in history.");
+      return;
+    }
+    tab.translateBackUrl = null;
+    try {
+      tab.el.loadURL(back);
+    } catch {
+      alert("Could not open the original page.");
+    }
+    closeTranslatePanel();
+  }
+
   function createTab(initialUrl, opts) {
     const id = "t" + ++idSeq;
     const url = initialUrl || homeUrl();
@@ -3729,6 +4165,8 @@
       faviconEl,
       groupId: optGid,
       guestWcId: null,
+      translateBackUrl: null,
+      translateInPageActive: false,
       muteBtn,
       camBtn,
       micBtn,
@@ -3905,7 +4343,17 @@
     el.addEventListener("page-title-updated", (e) => {
       titleEl.textContent = e.title || "Untitled";
     });
-    el.addEventListener("did-navigate", () => {
+    el.addEventListener("did-navigate", (ev) => {
+      const navUrl = typeof ev?.url === "string" ? ev.url : "";
+      try {
+        const h = new URL(navUrl || "about:blank").hostname;
+        if (!GOOGLE_TRANSLATE_HOST_RE.test(h)) {
+          entry.translateBackUrl = null;
+        }
+      } catch {
+        entry.translateBackUrl = null;
+      }
+      entry.translateInPageActive = false;
       faviconEl.hidden = true;
       faviconEl.removeAttribute("src");
       if (sessionVaultOfferTimerId != null) {
@@ -4008,6 +4456,62 @@
     }
   }
 
+  function speakPlainTextAloud(raw) {
+    if (typeof window.speechSynthesis === "undefined") {
+      alert("Speech is not available in this environment.");
+      return;
+    }
+    const t = typeof raw === "string" ? raw.trim() : String(raw || "").trim();
+    if (!t) {
+      alert("Nothing to read.");
+      return;
+    }
+    let spoken = t;
+    if (spoken.length > READ_ALOUD_MAX_CHARS) {
+      spoken = spoken.slice(0, READ_ALOUD_MAX_CHARS) + "…";
+    }
+    try {
+      window.speechSynthesis.cancel();
+      const u = new SpeechSynthesisUtterance(spoken);
+      u.rate = 1;
+      window.speechSynthesis.speak(u);
+    } catch {
+      alert("Could not start speech.");
+    }
+  }
+
+  function readSelectionAloud() {
+    if (typeof window.speechSynthesis === "undefined") {
+      alert("Speech is not available in this environment.");
+      return;
+    }
+    try {
+      if (window.speechSynthesis.speaking || window.speechSynthesis.pending) {
+        window.speechSynthesis.cancel();
+        return;
+      }
+    } catch {
+      /* */
+    }
+    const guest = getActiveWebview();
+    if (!guest) return;
+    void (async () => {
+      let text = "";
+      try {
+        const raw = await guest.executeJavaScript(READ_SELECTION_JS, true);
+        text = typeof raw === "string" ? raw.trim() : String(raw || "").trim();
+      } catch {
+        alert("Could not read the selection from this page.");
+        return;
+      }
+      if (!text) {
+        alert("No text selected. Select something on the page first.");
+        return;
+      }
+      speakPlainTextAloud(text);
+    })();
+  }
+
   function handleAction(action) {
     const w = getActiveWebview();
     switch (action) {
@@ -4053,6 +4557,9 @@
             /* */
           }
         })();
+        break;
+      case "read-selection-aloud":
+        readSelectionAloud();
         break;
       case "focus-omnibox":
         urlInput.focus();
@@ -4116,6 +4623,28 @@
   btnNewTabStrip?.addEventListener("click", openNewTabFromChrome);
   btnZoomReset.addEventListener("click", () => zoomResetActive());
   btnBookmark.addEventListener("click", () => toggleBookmarkCurrent());
+  btnTranslate?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    toggleTranslatePanel();
+  });
+  translatePanelGo?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    runTranslateForActiveTab();
+  });
+  translatePanelOriginal?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    viewOriginalForActiveTab();
+  });
+  document.addEventListener(
+    "mousedown",
+    (e) => {
+      if (!translatePanelIsOpen()) return;
+      const t = e.target;
+      if (translateDropdownWrap && translateDropdownWrap.contains(t)) return;
+      closeTranslatePanel();
+    },
+    true
+  );
   if (btnExitSplit) {
     btnExitSplit.addEventListener("click", () => exitSplitView());
   }
@@ -4171,6 +4700,29 @@
   settingsPanelClose?.addEventListener("click", () => closeSettingsPanel());
   settingsPanelBackdrop?.addEventListener("click", () => closeSettingsPanel());
   settingsSaveBtn?.addEventListener("click", () => void saveSettingsFromForm());
+  document.getElementById("settings-translate-save-key")?.addEventListener("click", async () => {
+    const keyEl = document.getElementById("settings-translate-api-key");
+    const key = keyEl?.value?.trim() || "";
+    const prov = document.getElementById("settings-translate-key-provider")?.value || "libre";
+    if (!key) {
+      alert("Paste an API key first.");
+      return;
+    }
+    const r = await window.nebula?.translationSaveKey?.({ apiKey: key, provider: prov });
+    if (r?.locked) {
+      alert("Unlock Saved passwords first.");
+      return;
+    }
+    if (r?.ok) {
+      if (keyEl) keyEl.value = "";
+      void refreshTranslationKeyStatus();
+    }
+  });
+  document.getElementById("settings-translate-clear-key")?.addEventListener("click", async () => {
+    if (!confirm("Remove the translation API key from the vault?")) return;
+    const r = await window.nebula?.translationSaveKey?.({ apiKey: "", provider: "libre" });
+    if (r?.ok) void refreshTranslationKeyStatus();
+  });
 
   settingsBookmarksImportMerge?.addEventListener("click", () => void runBookmarkImport(false));
   settingsBookmarksImportReplace?.addEventListener("click", () => void runBookmarkImport(true));
@@ -4491,6 +5043,13 @@
   window.addEventListener(
     "keydown",
     (e) => {
+      if (translatePanel && !translatePanel.hidden) {
+        if (e.key === "Escape") {
+          e.preventDefault();
+          closeTranslatePanel();
+          return;
+        }
+      }
       if (settingsShortcutMatch(e)) {
         e.preventDefault();
         toggleSettingsPanel();
@@ -4652,6 +5211,10 @@
         } catch {
           /* ignore */
         }
+        return;
+      }
+      if (payload.type === "read-aloud" && typeof payload.text === "string") {
+        speakPlainTextAloud(payload.text);
       }
     });
   }
@@ -4684,6 +5247,7 @@
     saveSessionSnapshot();
   });
 
+  syncYoutubeAdSkipAdblockState();
   void loadAppSettings().then(() => {
     tryOfferSessionRestoreOnLaunch();
     setNavButtons();

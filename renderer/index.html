@@ -66,6 +66,35 @@
               <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
             </svg>
           </button>
+          <div class="translate-dropdown-wrap">
+            <button
+              type="button"
+              class="icon-btn"
+              id="btn-translate"
+              title="Translate page"
+              aria-label="Translate page"
+              aria-expanded="false"
+              aria-haspopup="true"
+              aria-controls="translate-panel"
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <circle cx="12" cy="12" r="10" />
+                <path d="M2 12h20M12 2a15 15 0 000 20M12 2a15 15 0 010 20" />
+              </svg>
+            </button>
+            <div id="translate-panel" class="translate-panel" hidden role="region" aria-labelledby="translate-panel-title">
+              <div id="translate-panel-title" class="translate-panel-title">Translate page</div>
+              <label class="translate-panel-field">
+                <span class="translate-panel-label">Translate to</span>
+                <select id="translate-panel-lang" class="settings-select translate-panel-select" aria-label="Target language"></select>
+              </label>
+              <div class="translate-panel-actions">
+                <button type="button" class="settings-save-btn" id="translate-panel-go">Translate</button>
+                <button type="button" class="settings-action-btn" id="translate-panel-original">View original</button>
+              </div>
+              <p id="translate-panel-hint" class="settings-hint translate-panel-hint"></p>
+            </div>
+          </div>
         </nav>
         <form class="omnibox-wrap" id="no-drag">
           <div class="omnibox">
@@ -542,6 +571,49 @@
               <p class="settings-hint">
                 Some streaming or video sites expect ads or anti-adblock scripts. If playback fails, turn this off in Settings while you watch, then turn it back on.
               </p>
+            </section>
+            <section class="settings-section">
+              <h3 class="settings-section-title">Appearance &amp; reading</h3>
+              <label class="settings-checkbox-row">
+                <input type="checkbox" id="settings-force-dark-mode" />
+                <span>Force dark mode for website content (Chromium auto-dark; restart Nebula after changing)</span>
+              </label>
+              <p class="settings-hint">
+                Uses Chromium’s built-in darkening for pages. Some sites may look odd; turn it off and restart if needed. Read aloud: View → Read selection aloud, Ctrl+Shift+U (press again to stop), or right‑click the selection → Read aloud.
+              </p>
+            </section>
+            <section class="settings-section">
+              <h3 class="settings-section-title">Translation</h3>
+              <label class="settings-field">
+                <span class="settings-label">Default method</span>
+                <select id="settings-translate-engine" class="settings-select">
+                  <option value="google-wrap">Google Translate (opens translated page)</option>
+                  <option value="libre">LibreTranslate (translate in page)</option>
+                </select>
+              </label>
+              <label class="settings-field">
+                <span class="settings-label">LibreTranslate server URL</span>
+                <input type="url" id="settings-translate-libre-url" class="settings-input" spellcheck="false" autocomplete="off" placeholder="https://libretranslate.com" />
+              </label>
+              <p class="settings-hint">
+                In-page mode calls this server’s <code>/translate</code> API from Nebula (not from the website). Use your own instance for privacy or higher limits. Public libretranslate.com may rate-limit.
+              </p>
+              <label class="settings-field">
+                <span class="settings-label">Optional API key (stored in vault)</span>
+                <select id="settings-translate-key-provider" class="settings-select">
+                  <option value="libre">LibreTranslate key</option>
+                  <option value="deepl">DeepL API key (Free or Pro)</option>
+                </select>
+              </label>
+              <label class="settings-field">
+                <span class="settings-label">Paste key</span>
+                <input type="password" id="settings-translate-api-key" class="settings-input" spellcheck="false" autocomplete="off" placeholder="Not shown after save" />
+              </label>
+              <div class="settings-bookmarks-row">
+                <button type="button" class="settings-save-btn" id="settings-translate-save-key">Save key to vault</button>
+                <button type="button" class="settings-action-btn" id="settings-translate-clear-key">Remove key</button>
+              </div>
+              <p id="settings-translate-key-status" class="settings-hint"></p>
             </section>
             <section class="settings-section">
               <h3 class="settings-section-title">Address bar suggestions</h3>

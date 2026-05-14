@@ -38,6 +38,38 @@
     }
   }
 
+  /**
+   * When Nebula ad blocking is off, YouTube sometimes still shows an “ad blocker” interstitial
+   * (race / cache); one guest reload usually clears it. sessionStorage key is per watch?v= or path.
+   */
+  var GHOST_ADBLOCK_RELOAD_INJECT =
+    "(function(){try{" +
+    "var qs=location.search||'';" +
+    "var m=qs.match(/[?&]v=([^&]+)/);" +
+    "var k='nebulaYtGhostAR_'+(m?m[1]:(location.pathname||'').replace(/[^a-z0-9]/gi,'').slice(0,64));" +
+    "try{if(sessionStorage.getItem(k)==='1')return false;}catch(e0){}" +
+    "function hit(){" +
+    "var en=document.querySelector('ytd-enforcement-message-view-model');" +
+    "if(en&&en.offsetParent!==null){" +
+    "var et=(en.innerText||'').toLowerCase();" +
+    "if(et.indexOf('ad')!==-1&&(et.indexOf('block')!==-1||et.indexOf('allow')!==-1||et.indexOf('not allowed')!==-1))return true;" +
+    "}" +
+    "var pe=document.querySelector('yt-playability-error-supported-renderers');" +
+    "if(pe&&pe.offsetParent!==null){" +
+    "var pt=(pe.innerText||'').toLowerCase();" +
+    "if(pt.indexOf('ad blocker')!==-1||pt.indexOf('adblock')!==-1)return true;" +
+    "}" +
+    "var b=document.body;if(!b)return false;var t=(b.innerText||'').toLowerCase();" +
+    "if(t.indexOf('ad blockers are not allowed')!==-1)return true;" +
+    "if(t.indexOf('try disabling your ad blocker')!==-1)return true;" +
+    "if(t.indexOf('turn off any ad blocker')!==-1)return true;" +
+    "if(t.indexOf('it looks like you may be using an ad blocker')!==-1)return true;" +
+    "return false;}" +
+    "if(!hit())return false;" +
+    "try{sessionStorage.setItem(k,'1');}catch(e1){}" +
+    "location.reload();return true;" +
+    "}catch(err){return false;}})()";
+
   /** One-shot repair: sessionStorage `nebulaYtBlkRecover` prevents infinite reloads. */
   var BLACK_RECOVER_INJECT =
     "(function(){try{" +
@@ -67,6 +99,60 @@
     "if(st.display!=='none'&&st.visibility!=='hidden'&&Number(st.opacity)>0.05)return'bigplay';}" +
     "return'bad';" +
     "}catch(e){return'err';}})()";
+
+  /** @type {null | (() => boolean)} — true when in-app ad blocking is enabled in Settings */
+  var getAdblockBlockingEnabled = null;
+
+  function configure(opts) {
+    if (opts && typeof opts.getAdblockBlockingEnabled === "function") {
+      getAdblockBlockingEnabled = opts.getAdblockBlockingEnabled;
+    }
+  }
+
+  function shouldTryGhostAdblockReload() {
+    if (!getAdblockBlockingEnabled) return false;
+    try {
+      return getAdblockBlockingEnabled() === false;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function clearGhostAdblockTimers(webview) {
+    if (!webview) return;
+    var arr = webview._nebulaYtGhostRelTs;
+    if (!arr || !arr.length) return;
+    for (var i = 0; i < arr.length; i++) clearTimeout(arr[i]);
+    webview._nebulaYtGhostRelTs = null;
+  }
+
+  function runGhostAdblockReloadCheck(webview) {
+    if (!shouldTryGhostAdblockReload()) return;
+    try {
+      if (!isYouTubePageUrl(webview.getURL())) return;
+      var p = webview.executeJavaScript(GHOST_ADBLOCK_RELOAD_INJECT, false);
+      if (p && typeof p.catch === "function") p.catch(function () {});
+    } catch (e) {
+      /* ignore */
+    }
+  }
+
+  function scheduleGhostAdblockReloadChecks(webview) {
+    clearGhostAdblockTimers(webview);
+    if (!shouldTryGhostAdblockReload()) return;
+    if (!isYouTubePageUrl(webview.getURL())) return;
+    var delays = [1300, 3000, 6000];
+    webview._nebulaYtGhostRelTs = [];
+    for (var d = 0; d < delays.length; d++) {
+      (function (ms) {
+        webview._nebulaYtGhostRelTs.push(
+          window.setTimeout(function () {
+            runGhostAdblockReloadCheck(webview);
+          }, ms)
+        );
+      })(delays[d]);
+    }
+  }
 
   /** One reload-at-most for the first watch navigation after Nebula starts (shell session). */
   var coldStartFirstWatchPending = true;
@@ -373,6 +459,7 @@
         clearBlackTimers(webview);
         clearColdStartTimer(webview);
       }
+      scheduleGhostAdblockReloadChecks(webview);
     }
 
     webview.addEventListener("did-finish-load", onYoutubeNavigation);
@@ -418,6 +505,7 @@
     if (!webview) return;
     clearBlackTimers(webview);
     clearColdStartTimer(webview);
+    clearGhostAdblockTimers(webview);
     if (webview._nebulaYtPollTimer) {
       clearInterval(webview._nebulaYtPollTimer);
       webview._nebulaYtPollTimer = null;
@@ -427,6 +515,7 @@
   window.NebulaYoutubeAdSkip = {
     install: install,
     stop: stop,
+    configure: configure,
     isYouTubePageUrl: isYouTubePageUrl,
     isYouTubeWatchUrl: isYouTubeWatchUrl,
   };

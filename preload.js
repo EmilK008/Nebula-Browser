@@ -164,6 +164,11 @@ contextBridge.exposeInMainWorld("nebula", {
   stopGuestMediaTracks: (payload) => ipcRenderer.invoke("nebula-stop-guest-media-tracks", payload ?? {}),
   checkForUpdates: () => ipcRenderer.invoke("nebula-check-for-updates"),
   getUpdateInfo: () => ipcRenderer.invoke("nebula-get-update-info"),
+  /** Restart the app (used after toggling options that need a new Chromium process, e.g. force dark mode). */
+  relaunchApp: () => ipcRenderer.invoke("nebula-relaunch-app"),
+  translationStatus: () => ipcRenderer.invoke("nebula-translation-status"),
+  translationSaveKey: (payload) => ipcRenderer.invoke("nebula-translation-save-key", payload ?? {}),
+  translationTranslateTexts: (payload) => ipcRenderer.invoke("nebula-translation-translate-texts", payload ?? {}),
   openExternalUrl: (url) => ipcRenderer.invoke("nebula-open-external-url", { url }),
   /** Native dialog: installer vs portable vs cancel; returns choice + URLs (renderer opens or runs installer). */
   promptUpdateInstallChoice: (payload) =>

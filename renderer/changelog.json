@@ -1,6 +1,36 @@
 {
   "entries": [
     {
+      "version": "0.6.1",
+      "date": "2026-05-14",
+      "fixes": [
+        "DeepL: authenticate with `Authorization: DeepL-Auth-Key` and a JSON body for `/v2/translate` (form-body `auth_key` is no longer supported). Tries api-free.deepl.com then api.deepl.com so Free and Pro keys match the right host."
+      ]
+    },
+    {
+      "version": "0.6.0",
+      "date": "2026-05-14",
+      "added": [
+        "Translation: choose Google Translate (opens Google’s wrapped page) or LibreTranslate (in-page text replacement) under Settings → Translation; optional LibreTranslate server URL for self-hosted instances.",
+        "Translation API keys: save a LibreTranslate or DeepL Free API key via Settings — stored as a hidden vault entry (same encryption as saved passwords). Unlock the vault to translate when a key is present. Keys are omitted from vault JSON export."
+      ]
+    },
+    {
+      "version": "0.5.10",
+      "date": "2026-05-14",
+      "added": [
+        "Page translation: toolbar globe button opens a panel to pick a target language, Translate (loads the current http(s) tab through Google Translate’s page wrapper), and View original (returns to the saved URL). The page URL is sent to Google; home / welcome and non-http pages are excluded."
+      ]
+    },
+    {
+      "version": "0.5.9",
+      "date": "2026-05-14",
+      "added": [
+        "Read selected text aloud: View → Read selection aloud or Ctrl+Shift+U (Cmd+Shift+U on macOS); right-click selected text in a tab and choose Read aloud; uses the system speech engine. Press the shortcut again while speaking to stop.",
+        "Force dark mode for website content: Settings → Appearance & reading enables Chromium’s WebContentsForceDark for tab pages; Nebula prompts to restart after you change the toggle so the flag applies at startup."
+      ]
+    },
+    {
       "version": "0.5.8",
       "date": "2026-05-13",
       "added": [
@@ -9,7 +39,8 @@
       "fixes": [
         "Windows packaging: electron-builder afterPack runs Castlabs EVS sign-pkg on the unpacked app before NSIS and Portable artifacts bundle it, so installers and Portable.exe match win-unpacked VMP (NEBULA_SKIP_EVS=1 to skip; NEBULA_EVS_SIGN=1 fails the build on EVS errors for CI).",
         "Shell focus: do not focus the active tab webview while the address bar, omnibox suggestions, downloads dock, or update banner has focus (avoids typing feeling dead until alt-tab).",
-        "Saved passwords: vault panel reserves list height with an internal scroll on the add-entry form when it is tall; the vault overlay and dialog scroll on short windows so controls stay reachable."
+        "Saved passwords: vault panel reserves list height with an internal scroll on the add-entry form when it is tall; the vault overlay and dialog scroll on short windows so controls stay reachable.",
+        "YouTube: when ad blocking is off in Settings but the site still shows an ad-blocker interstitial, Nebula may reload the tab once (per video) to clear the false positive."
       ]
     },
     {

@@ -132,6 +132,71 @@ body {
   margin-left: auto;
 }
 
+.translate-dropdown-wrap {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.translate-panel {
+  position: absolute;
+  left: 0;
+  top: calc(100% + 6px);
+  z-index: 200;
+  min-width: 288px;
+  max-width: min(360px, 92vw);
+  padding: 12px 14px 14px;
+  border-radius: var(--radius);
+  background: rgba(18, 20, 28, 0.98);
+  border: 1px solid var(--border);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.45);
+}
+
+.translate-panel[hidden] {
+  display: none !important;
+}
+
+.translate-panel-title {
+  margin: 0 0 10px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.translate-panel-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.translate-panel-label {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.translate-panel-select {
+  width: 100%;
+}
+
+.translate-panel-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.translate-panel-actions .settings-save-btn,
+.translate-panel-actions .settings-action-btn {
+  flex: 1 1 auto;
+  min-width: 110px;
+}
+
+.translate-panel-hint {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
 .zoom-reset-btn {
   flex-shrink: 0;
   height: 36px;
