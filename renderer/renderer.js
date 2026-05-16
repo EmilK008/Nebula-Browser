@@ -107,10 +107,11 @@
 
   const INPAGE_TRANSLATE_REVERT_JS = `(function(){
     try{
+      if(typeof window.__nebulaTrTeardown==='function'){try{window.__nebulaTrTeardown();}catch(e0){}}
       var raw=sessionStorage.getItem("nebulaTrOrig");
       if(!raw)return false;
       var orig=JSON.parse(raw);
-      var idx=0;
+      if(!Array.isArray(orig))orig=[];
       function skip(name){
         var u=(name||"").toUpperCase();
         return u==="SCRIPT"||u==="STYLE"||u==="NOSCRIPT"||u==="SVG"||u==="CODE"||u==="PRE"||u==="TEXTAREA";
@@ -122,7 +123,17 @@
           if(!p||skip(p.tagName))return;
           var v=node.nodeValue;
           if(!v||!String(v).trim()||String(v).replace(/\\s+/g,"").length<2)return;
-          if(idx<orig.length){node.nodeValue=orig[idx];idx++;}
+          var ri=node.__nebulaTrOrigIdx;
+          if(typeof ri==="number"&&ri>=0&&ri<orig.length&&orig[ri]!=null){
+            node.nodeValue=String(orig[ri]);
+            try{delete node.__nebulaTrOrigIdx;}catch(e1){}
+            return;
+          }
+          if(typeof node.__nebulaTrSrc==="string"){
+            node.nodeValue=node.__nebulaTrSrc;
+            try{delete node.__nebulaTrSrc;}catch(e2){}
+            return;
+          }
           return;
         }
         if(node.nodeType===1){
@@ -142,8 +153,122 @@
 
   function buildInpageTranslateApplyJs(translated) {
     const inner = JSON.stringify(translated);
-    return `(function(){try{var trans=JSON.parse(${JSON.stringify(inner)});function skip(name){var u=(name||"").toUpperCase();return u==="SCRIPT"||u==="STYLE"||u==="NOSCRIPT"||u==="SVG"||u==="CODE"||u==="PRE"||u==="TEXTAREA";}var idx=0;function walk(node){if(!node)return;if(node.nodeType===3){var p=node.parentElement;if(!p||skip(p.tagName))return;var v=node.nodeValue;if(!v||!String(v).trim()||String(v).replace(/\\s+/g,"").length<2)return;if(idx<trans.length){node.nodeValue=trans[idx];idx++;}return;}if(node.nodeType===1){var el=node;if(el.shadowRoot)walk(el.shadowRoot);for(var c=el.firstChild;c;c=c.nextSibling)walk(c);}if(node.nodeType===11){for(var k=0;k<node.childNodes.length;k++)walk(node.childNodes[k]);}}walk(document.documentElement);return true;}catch(e){return false;}})()`;
+    return `(function(){try{var trans=JSON.parse(${JSON.stringify(inner)});function skip(name){var u=(name||"").toUpperCase();return u==="SCRIPT"||u==="STYLE"||u==="NOSCRIPT"||u==="SVG"||u==="CODE"||u==="PRE"||u==="TEXTAREA";}var idx=0;function walk(node){if(!node)return;if(node.nodeType===3){var p=node.parentElement;if(!p||skip(p.tagName))return;var v=node.nodeValue;if(!v||!String(v).trim()||String(v).replace(/\\s+/g,"").length<2)return;if(idx<trans.length){node.__nebulaTrOrigIdx=idx;node.nodeValue=trans[idx];idx++;}return;}if(node.nodeType===1){var el=node;if(el.shadowRoot)walk(el.shadowRoot);for(var c=el.firstChild;c;c=c.nextSibling)walk(c);}if(node.nodeType===11){for(var k=0;k<node.childNodes.length;k++)walk(node.childNodes[k]);}}walk(document.documentElement);return true;}catch(e){return false;}})()`;
   }
+
+  function buildInpageTranslateIncrementalApplyJs(pairs) {
+    const inner = JSON.stringify(pairs);
+    return `(function(){try{if(typeof window.__nebulaTrApplyIncremental!=="function")return false;var pairs=JSON.parse(${JSON.stringify(inner)});window.__nebulaTrApplyIncremental(pairs);return true;}catch(e){return false}})()`;
+  }
+
+  const INPAGE_TRANSLATE_INSTALL_AUTO_JS = `(function(){
+    try{
+      if(typeof window.__nebulaTrTeardown==='function'){try{window.__nebulaTrTeardown();}catch(e0){}}
+      var handled=new WeakSet();
+      var nodeById=new Map();
+      var nextId=1;
+      var exportQueue=[];
+      var deb=null;
+      var obs=null;
+      window.__nebulaTrApplying=false;
+      window.__nebulaTrAuto=true;
+      function skip(name){
+        var u=(name||"").toUpperCase();
+        return u==="SCRIPT"||u==="STYLE"||u==="NOSCRIPT"||u==="SVG"||u==="CODE"||u==="PRE"||u==="TEXTAREA";
+      }
+      function visitMark(root){
+        function v(node){
+          if(!node)return;
+          if(node.nodeType===3){
+            var p=node.parentElement;
+            if(!p||skip(p.tagName))return;
+            var val=node.nodeValue;
+            if(val&&String(val).trim()&&String(val).replace(/\\s+/g,"").length>=2)handled.add(node);
+            return;
+          }
+          if(node.nodeType===1){
+            var el=node;
+            if(el.shadowRoot)visitMark(el.shadowRoot);
+            for(var c=el.firstChild;c;c=c.nextSibling)v(c);
+          }
+          if(node.nodeType===11){
+            for(var k=0;k<node.childNodes.length;k++)v(node.childNodes[k]);
+          }
+        }
+        v(root);
+      }
+      visitMark(document.documentElement);
+      function scanNew(){
+        if(!window.__nebulaTrAuto||window.__nebulaTrApplying)return;
+        function walk(node){
+          if(!node)return;
+          if(node.nodeType===3){
+            var p=node.parentElement;
+            if(!p||skip(p.tagName))return;
+            if(handled.has(node))return;
+            var val=node.nodeValue;
+            if(!val||!String(val).trim()||String(val).replace(/\\s+/g,"").length<2)return;
+            try{node.__nebulaTrSrc=val;}catch(e2){}
+            var id=nextId++;
+            nodeById.set(id,node);
+            exportQueue.push({id:id,text:val});
+            handled.add(node);
+            return;
+          }
+          if(node.nodeType===1){
+            var el=node;
+            if(el.shadowRoot)walk(el.shadowRoot);
+            for(var c=el.firstChild;c;c=c.nextSibling)walk(c);
+          }
+          if(node.nodeType===11){
+            for(var k=0;k<node.childNodes.length;k++)walk(node.childNodes[k]);
+          }
+        }
+        walk(document.documentElement);
+      }
+      function onMut(){
+        if(!window.__nebulaTrAuto||window.__nebulaTrApplying)return;
+        if(deb)clearTimeout(deb);
+        deb=setTimeout(function(){
+          deb=null;
+          scanNew();
+        },420);
+      }
+      obs=new MutationObserver(onMut);
+      obs.observe(document.documentElement,{subtree:true,childList:true,characterData:false});
+      setTimeout(function(){scanNew();},0);
+      window.__nebulaTrDrainQueue=function(){
+        if(!exportQueue.length)return"[]";
+        var n=Math.min(80,exportQueue.length);
+        var chunk=exportQueue.splice(0,n);
+        return JSON.stringify(chunk);
+      };
+      window.__nebulaTrApplyIncremental=function(pairs){
+        window.__nebulaTrApplying=true;
+        try{
+          for(var i=0;i<pairs.length;i++){
+            var p=pairs[i];
+            var node=nodeById.get(p.id);
+            if(node&&node.parentNode!=null)node.nodeValue=p.t;
+            nodeById.delete(p.id);
+          }
+        }finally{
+          window.__nebulaTrApplying=false;
+        }
+      };
+      window.__nebulaTrTeardown=function(){
+        window.__nebulaTrAuto=false;
+        if(deb){clearTimeout(deb);deb=null;}
+        if(obs){try{obs.disconnect();}catch(e1){}obs=null;}
+        exportQueue.length=0;
+        nodeById.clear();
+        window.__nebulaTrDrainQueue=null;
+        window.__nebulaTrApplyIncremental=null;
+        window.__nebulaTrTeardown=null;
+      };
+      return true;
+    }catch(err){return false;}
+  })()`;
 
   const ZOOM_MIN = 0.5;
   const ZOOM_MAX = 3;
@@ -277,7 +402,7 @@
   /** @type {Map<string, HTMLElement>} */
   const downloadElById = new Map();
 
-  /** @type {{ id: string, el: Electron.WebviewTag | null, tabEl: HTMLElement, titleEl: HTMLElement, faviconEl: HTMLImageElement, groupId: string | null, guestWcId: number | null, translateBackUrl: string | null, translateInPageActive: boolean, muteBtn: HTMLButtonElement, camBtn: HTMLButtonElement, micBtn: HTMLButtonElement, mediaStrip: HTMLElement, mediaState: { audible: boolean, audioMuted: boolean, camera: boolean, microphone: boolean } }[]} */
+  /** @type {{ id: string, el: Electron.WebviewTag | null, tabEl: HTMLElement, titleEl: HTMLElement, faviconEl: HTMLImageElement, groupId: string | null, guestWcId: number | null, translateBackUrl: string | null, translateInPageActive: boolean, translateInPagePollTimer: number | null, translateInPageTargetLang: string | null, muteBtn: HTMLButtonElement, camBtn: HTMLButtonElement, micBtn: HTMLButtonElement, mediaStrip: HTMLElement, mediaState: { audible: boolean, audioMuted: boolean, camera: boolean, microphone: boolean } }[]} */
   let tabs = [];
   let activeId = null;
   let idSeq = 0;
@@ -3409,6 +3534,7 @@
     if (idx === -1) return;
 
     const tab = tabs[idx];
+    stopTranslateInPagePollForTab(tab);
     let closedUrl = homeUrl();
     try {
       closedUrl = tab.el.getURL() || homeUrl();
@@ -3990,6 +4116,55 @@
     return "";
   }
 
+  function stopTranslateInPagePollForTab(tab) {
+    if (!tab) return;
+    if (tab.translateInPagePollTimer != null) {
+      clearInterval(tab.translateInPagePollTimer);
+      tab.translateInPagePollTimer = null;
+    }
+  }
+
+  function startTranslateInPagePollForTab(tab) {
+    stopTranslateInPagePollForTab(tab);
+    tab.translateInPagePollTimer = window.setInterval(() => {
+      void processTranslateInPagePoll(tab);
+    }, 550);
+  }
+
+  async function processTranslateInPagePoll(tab) {
+    if (!tab?.el || !tab.translateInPageActive || activeId !== tab.id) return;
+    const w = tab.el;
+    let raw;
+    try {
+      raw = await w.executeJavaScript(
+        `(function(){try{return typeof window.__nebulaTrDrainQueue==='function'?window.__nebulaTrDrainQueue():'[]';}catch(e){return'[]'}})()`,
+        true
+      );
+    } catch {
+      return;
+    }
+    let chunk;
+    try {
+      chunk = JSON.parse(typeof raw === "string" ? raw : String(raw || "[]"));
+    } catch {
+      return;
+    }
+    if (!Array.isArray(chunk) || chunk.length === 0) return;
+    const texts = chunk.map((c) => (c && typeof c.text === "string" ? c.text : ""));
+    const ids = chunk.map((c) => (c && typeof c.id === "number" ? c.id : NaN));
+    if (ids.some((x) => !Number.isFinite(x))) return;
+    const target = tab.translateInPageTargetLang || translatePanelLang?.value || "en";
+    const r = await window.nebula?.translationTranslateTexts?.({ texts, target });
+    if (!r || !r.ok || !Array.isArray(r.translated) || r.translated.length !== texts.length) return;
+    const pairs = ids.map((id, i) => ({ id, t: String(r.translated[i] ?? "") }));
+    const applyJs = buildInpageTranslateIncrementalApplyJs(pairs);
+    try {
+      await w.executeJavaScript(applyJs, true);
+    } catch {
+      /* ignore */
+    }
+  }
+
   async function runTranslateLibreInPage(tab) {
     const w = tab.el;
     if (!w) return;
@@ -4002,6 +4177,15 @@
     if (!isHttpLikePageUrl(cur) || isWelcomePageUrl(cur)) {
       alert("Open an ordinary http(s) page first (not the home or welcome screen).");
       return;
+    }
+    if (tab.translateInPageActive) {
+      stopTranslateInPagePollForTab(tab);
+      try {
+        await w.executeJavaScript(INPAGE_TRANSLATE_REVERT_JS, true);
+      } catch {
+        /* ignore */
+      }
+      tab.translateInPageActive = false;
     }
     const tl = translatePanelLang?.value || "en";
     let texts;
@@ -4036,7 +4220,21 @@
       alert("Could not apply translation to the page.");
       return;
     }
+    let autoOk = false;
+    try {
+      autoOk = !!(await w.executeJavaScript(INPAGE_TRANSLATE_INSTALL_AUTO_JS, true));
+    } catch {
+      autoOk = false;
+    }
+    if (!autoOk) {
+      alert("Translation was applied but live updates could not be enabled.");
+      tab.translateInPageActive = true;
+      tab.translateInPageTargetLang = tl;
+      return;
+    }
     tab.translateInPageActive = true;
+    tab.translateInPageTargetLang = tl;
+    startTranslateInPagePollForTab(tab);
   }
 
   function runTranslateForActiveTab() {
@@ -4066,6 +4264,7 @@
     const tab = tabs.find((t) => t.id === activeId);
     if (!tab || !tab.el) return;
     if (tab.translateInPageActive) {
+      stopTranslateInPagePollForTab(tab);
       void (async () => {
         try {
           await tab.el.executeJavaScript(INPAGE_TRANSLATE_REVERT_JS, true);
@@ -4073,6 +4272,7 @@
           /* */
         }
         tab.translateInPageActive = false;
+        tab.translateInPageTargetLang = null;
         closeTranslatePanel();
       })();
       return;
@@ -4167,6 +4367,8 @@
       guestWcId: null,
       translateBackUrl: null,
       translateInPageActive: false,
+      translateInPagePollTimer: null,
+      translateInPageTargetLang: null,
       muteBtn,
       camBtn,
       micBtn,
@@ -4353,7 +4555,9 @@
       } catch {
         entry.translateBackUrl = null;
       }
+      stopTranslateInPagePollForTab(entry);
       entry.translateInPageActive = false;
+      entry.translateInPageTargetLang = null;
       faviconEl.hidden = true;
       faviconEl.removeAttribute("src");
       if (sessionVaultOfferTimerId != null) {

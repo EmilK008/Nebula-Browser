@@ -204,7 +204,7 @@
 
     var BLK_KEY = "nebulaYtBlkRecover";
 
-    var AD_PLAYBACK_TARGET = 3;
+    var AD_PLAYBACK_TARGET = 16;
     var nebulaSavedPlaybackRate = 1;
     var nebulaSavedMuted = false;
     var nebulaSavedVolume = 1;
@@ -240,10 +240,10 @@
         }
         try {
           if (v.videoWidth > 0 && v.playbackRate < AD_PLAYBACK_TARGET - 0.05) {
-            v.playbackRate = Math.min(4, AD_PLAYBACK_TARGET);
+            v.playbackRate = AD_PLAYBACK_TARGET;
           }
         } catch (e) {
-          /* ignore */
+          v.playbackRate = 3; // fallback
         }
       } else if (nebulaAdSpeedArm) {
         try {

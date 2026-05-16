@@ -1,6 +1,16 @@
 {
   "entries": [
     {
+      "version": "0.6.2",
+      "date": "2026-05-16",
+      "added": [
+        "LibreTranslate in-page mode: after Translate, new DOM content is translated automatically until you choose View original (MutationObserver + batched API calls; only the active tab is polled)."
+      ],
+      "fixes": [
+        "LibreTranslate View original: restore text per translated node (index and source snapshots on text nodes) instead of walking the DOM in order, which broke pages after dynamic updates or incremental translation."
+      ]
+    },
+    {
       "version": "0.6.1",
       "date": "2026-05-14",
       "fixes": [
