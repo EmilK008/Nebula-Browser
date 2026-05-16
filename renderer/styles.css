@@ -717,6 +717,25 @@ body {
   z-index: 1;
 }
 
+.tab.tab--private {
+  border-color: rgba(139, 92, 246, 0.45);
+  background: rgba(139, 92, 246, 0.08);
+}
+
+.tab.tab--private:hover {
+  background: rgba(139, 92, 246, 0.12);
+}
+
+.tab.tab--private.active {
+  border-color: rgba(167, 139, 250, 0.55);
+}
+
+.settings-profile-add-panel {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
 .tab-reorder-indicator {
   position: absolute;
   top: 4px;

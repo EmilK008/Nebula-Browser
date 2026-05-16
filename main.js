@@ -21,6 +21,63 @@ const { pipeline } = require("stream/promises");
 const { Readable } = require("stream");
 const nebulaAdblock = require("./adblock");
 
+/** guest `webContents.id` → `<webview partition=…>` string (OAuth popups + window.open must match). */
+const guestPartitionByWcId = new Map();
+
+/** When true, last window closed for `app.relaunch()` — skip `app.quit()` in `window-all-closed` or the new process may not start (Windows). */
+let appRelaunchPending = false;
+
+function sanitizeProfileId(raw) {
+  let s = typeof raw === "string" ? raw.trim().toLowerCase() : "";
+  if (!s || s === "default") return "default";
+  s = s.replace(/[^a-z0-9_-]/g, "").slice(0, 48);
+  return s || "default";
+}
+
+function browsingPersistPartitionForProfileId(profileId) {
+  const id = sanitizeProfileId(profileId);
+  if (id === "default") return "persist:nebula";
+  return `persist:nebula-${id}`;
+}
+
+function incognitoMemoryPartitionForProfileId(profileId) {
+  const id = sanitizeProfileId(profileId);
+  const slug = id === "default" ? "nebula" : id;
+  return `nebula-pvt-${slug}`;
+}
+
+function guestCookiePartition() {
+  return browsingPersistPartitionForProfileId(loadSettings().activeProfileId);
+}
+
+function normalizeProfilesList(arr) {
+  const def = { id: "default", name: "Default" };
+  const out = [];
+  const seen = new Set();
+  if (!Array.isArray(arr)) return [def];
+  for (const row of arr) {
+    if (!row || typeof row !== "object") continue;
+    const id = sanitizeProfileId(row.id || row.name || "");
+    const name = typeof row.name === "string" && row.name.trim() ? row.name.trim().slice(0, 64) : id;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    out.push({ id, name });
+  }
+  if (!out.some((p) => p.id === "default")) out.unshift(def);
+  return out;
+}
+
+function augmentSettingsForRenderer(s) {
+  const bid = sanitizeProfileId(s.activeProfileId);
+  return {
+    ...s,
+    activeProfileId: bid,
+    profiles: normalizeProfilesList(s.profiles),
+    browsingPartition: browsingPersistPartitionForProfileId(bid),
+    incognitoPartition: incognitoMemoryPartitionForProfileId(bid),
+  };
+}
+
 function readNebulaPackageJson() {
   try {
     return JSON.parse(fs.readFileSync(path.join(__dirname, "package.json"), "utf8"));
@@ -961,6 +1018,9 @@ const DEFAULT_SETTINGS = {
   translateEngine: "google-wrap",
   /** Base URL for LibreTranslate (no trailing slash). */
   translateLibreUrl: "https://libretranslate.com",
+  /** Browsing profile id (cookies / session). `default` uses the legacy `persist:nebula` partition. */
+  activeProfileId: "default",
+  profiles: [{ id: "default", name: "Default" }],
   searchSuggestions: {
     layerOrder: ["past", "local", "remote"],
     enablePastSearch: true,
@@ -1005,6 +1065,9 @@ function mergeDeep(base, patch) {
 
 function normalizeSettings(s) {
   const o = clone(s);
+  o.profiles = normalizeProfilesList(o.profiles);
+  o.activeProfileId = sanitizeProfileId(o.activeProfileId);
+  if (!o.profiles.some((p) => p.id === o.activeProfileId)) o.activeProfileId = "default";
   const ss = o.searchSuggestions;
   if (!ss || typeof ss !== "object") {
     o.searchSuggestions = clone(DEFAULT_SETTINGS.searchSuggestions);
@@ -1055,23 +1118,54 @@ function saveSettings(settings) {
   fs.writeFileSync(settingsPath(), JSON.stringify(settings, null, 2));
 }
 
-ipcMain.handle("nebula-get-settings", () => loadSettings());
+ipcMain.handle("nebula-get-settings", () => augmentSettingsForRenderer(loadSettings()));
 
 ipcMain.handle("nebula-set-settings", (_e, patch) => {
-  if (!patch || typeof patch !== "object") return loadSettings();
+  if (!patch || typeof patch !== "object") return augmentSettingsForRenderer(loadSettings());
   const cur = loadSettings();
   const next = normalizeSettings(mergeDeep(cur, patch));
   saveSettings(next);
-  nebulaAdblock.applyAdblockFromSettings(next, WEB_PARTITION);
-  return next;
+  const bp = browsingPersistPartitionForProfileId(next.activeProfileId);
+  const ip = incognitoMemoryPartitionForProfileId(next.activeProfileId);
+  nebulaAdblock.applyAdblockFromSettings(next, bp);
+  nebulaAdblock.applyAdblockFromSettings(next, ip);
+  return augmentSettingsForRenderer(next);
 });
 
+/**
+ * electron-builder Windows portable sets `PORTABLE_EXECUTABLE_FILE` to the real .exe the user
+ * launched. `process.execPath` may point elsewhere, so `app.relaunch()` without `execPath` exits
+ * without bringing the portable back (NSIS / dev `electron .` are unaffected).
+ * @returns {Electron.RelaunchOptions | undefined}
+ */
+function relaunchOptionsForPortableWindows() {
+  if (process.platform !== "win32") return undefined;
+  const file =
+    typeof process.env.PORTABLE_EXECUTABLE_FILE === "string" ? process.env.PORTABLE_EXECUTABLE_FILE.trim() : "";
+  if (!file) return undefined;
+  try {
+    if (!fs.existsSync(file)) return undefined;
+  } catch {
+    return undefined;
+  }
+  const args = process.argv.slice(1);
+  return args.length > 0 ? { execPath: file, args } : { execPath: file };
+}
+
 ipcMain.handle("nebula-relaunch-app", () => {
+  appRelaunchPending = true;
   setImmediate(() => {
     try {
-      app.relaunch();
-    } catch {
-      /* */
+      const opts = relaunchOptionsForPortableWindows();
+      if (opts) app.relaunch(opts);
+      else app.relaunch();
+    } catch (e) {
+      console.warn("[Nebula] relaunch:", e?.message || e);
+      try {
+        app.relaunch();
+      } catch {
+        /* */
+      }
     }
     app.exit(0);
   });
@@ -1617,8 +1711,7 @@ function saveVaultEntries(entries) {
   }
 }
 
-/** Guest webviews use this partition — cookies reflect “remembered” logins. */
-const NEBULA_VAULT_WEB_PARTITION = "persist:nebula";
+/** Guest webviews use a per-profile persist partition — cookies for vault session checks use the same. */
 
 const VAULT_SESSION_PLACEHOLDER_NOTES =
   "Nebula: Signed in via saved browser session (cookies). Password was not captured—edit this entry to add your login password if you want it stored here.";
@@ -1693,7 +1786,7 @@ async function removePartitionCookiesForHostname(persist, originStr) {
 async function clearSiteSessionDataForOrigin(originStr) {
   const origin = normalizeVaultClearOrigin(originStr);
   if (!origin || !/^https?:\/\//i.test(origin)) return;
-  const persist = session.fromPartition(NEBULA_VAULT_WEB_PARTITION);
+  const persist = session.fromPartition(guestCookiePartition());
   const dataTypes = ["cookies", "cache", "localStorage", "indexedDB", "serviceWorkers", "fileSystems", "webSQL", "backgroundFetch"];
 
   try {
@@ -1731,7 +1824,7 @@ function cookieNameLooksSessionRelated(name) {
 }
 
 async function vaultPageHasSessionLikeCookies(pageUrl) {
-  const persist = session.fromPartition(NEBULA_VAULT_WEB_PARTITION);
+  const persist = session.fromPartition(guestCookiePartition());
   let cookies;
   try {
     cookies = await persist.cookies.get({ url: pageUrl });
@@ -2280,10 +2373,14 @@ function guestOAuthPopupNeedsNativeWindow(urlStr, details) {
   }
 }
 
-/** webPreferences for OAuth popups: same partition as webviews so IdP cookies and return redirects work. */
-function guestOAuthPopupBrowserWindowPrefs() {
+/** webPreferences for OAuth popups: same partition as the opener webview. */
+function guestOAuthPopupBrowserWindowPrefs(partition) {
+  const p =
+    typeof partition === "string" && partition
+      ? partition
+      : browsingPersistPartitionForProfileId(loadSettings().activeProfileId);
   return {
-    partition: NEBULA_VAULT_WEB_PARTITION,
+    partition: p,
     contextIsolation: true,
     nodeIntegration: false,
     sandbox: true,
@@ -2340,11 +2437,17 @@ ipcMain.handle("nebula-home-suggestions", async (event, query) => {
   }
 });
 
-ipcMain.handle("nebula-register-guest-window-open", (_e, guestWcId) => {
-  const id = Number(guestWcId);
+ipcMain.handle("nebula-register-guest-window-open", (_e, payload) => {
+  const p = payload && typeof payload === "object" ? payload : {};
+  const id = Number(p.guestWebContentsId);
   if (!Number.isFinite(id) || id <= 0) return { ok: false };
   const guest = webContents.fromId(id);
   if (!guest || guest.isDestroyed()) return { ok: false };
+  const part =
+    typeof p.partition === "string" && p.partition.trim()
+      ? p.partition.trim()
+      : browsingPersistPartitionForProfileId(loadSettings().activeProfileId);
+  guestPartitionByWcId.set(guest.id, part);
   if (!guestChildWindowFocusHooks.has(guest)) {
     guestChildWindowFocusHooks.add(guest);
     guest.on("did-create-window", (childWindow) => {
@@ -2369,6 +2472,7 @@ ipcMain.handle("nebula-register-guest-window-open", (_e, guestWcId) => {
       return { action: "allow" };
     }
     const url = typeof details.url === "string" ? details.url : "";
+    const tabPartition = guestPartitionByWcId.get(guest.id) || part;
     if (guestOAuthPopupNeedsNativeWindow(url, details)) {
       const hostWin = BrowserWindow.fromWebContents(guest.hostWebContents);
       return {
@@ -2382,7 +2486,7 @@ ipcMain.handle("nebula-register-guest-window-open", (_e, guestWcId) => {
           show: true,
           autoHideMenuBar: true,
           backgroundColor: "#ffffff",
-          webPreferences: guestOAuthPopupBrowserWindowPrefs(),
+          webPreferences: guestOAuthPopupBrowserWindowPrefs(tabPartition),
         },
       };
     }
@@ -2392,7 +2496,7 @@ ipcMain.handle("nebula-register-guest-window-open", (_e, guestWcId) => {
     try {
       const host = guest.hostWebContents;
       if (host && !host.isDestroyed()) {
-        host.send("nebula-open-url-in-tab", { url });
+        host.send("nebula-open-url-in-tab", { url, partition: tabPartition });
       }
     } catch (err) {
       console.error("[Nebula] window-open → tab:", err?.message || err);
@@ -2404,8 +2508,8 @@ ipcMain.handle("nebula-register-guest-window-open", (_e, guestWcId) => {
 
 const isMac = process.platform === "darwin";
 
-/** Shared disk session for all webviews: logins and cookies persist across tabs and restarts. */
-const WEB_PARTITION = "persist:nebula";
+/** Legacy default Chromium profile folder name under `Partitions/` (HTTP cache reset). */
+const LEGACY_DEFAULT_PARTITION_SUB = "nebula";
 
 /**
  * One-time delete of Chromium HTTP disk cache folders. Fixes broken cache index / size
@@ -2423,7 +2527,7 @@ function maybeResetHttpDiskCacheOnce() {
   };
   try {
     const ud = app.getPath("userData");
-    const sub = WEB_PARTITION.startsWith("persist:") ? WEB_PARTITION.slice("persist:".length) : "nebula";
+    const sub = LEGACY_DEFAULT_PARTITION_SUB;
     rm(path.join(ud, "Cache"));
     rm(path.join(ud, "Code Cache"));
     rm(path.join(ud, "Partitions", sub, "Cache"));
@@ -2905,6 +3009,11 @@ function registerAppMenu() {
       click: (_e, bw) => dispatchAction(bw, "new-tab"),
     },
     {
+      label: "New Private Tab",
+      accelerator: "CmdOrCtrl+Shift+N",
+      click: (_e, bw) => dispatchAction(bw, "new-private-tab"),
+    },
+    {
       label: "Close Tab",
       accelerator: "CmdOrCtrl+W",
       click: (_e, bw) => dispatchAction(bw, "close-tab"),
@@ -3121,20 +3230,22 @@ function createWindow() {
   win.on("close", () => saveWindowState(win));
 }
 
-function configureWebProfileSession() {
+function configureWebProfileSession(browsingPart, incognitoPart) {
   sitePermissionsState = loadSitePermissionsState();
-  const persist = session.fromPartition(WEB_PARTITION);
-  persist.setUserAgent(chromeAlignedUserAgent());
-
+  const ua = chromeAlignedUserAgent();
   installSessionPermissionHandlers(session.defaultSession);
-  installSessionPermissionHandlers(persist);
+  for (const part of [browsingPart, incognitoPart]) {
+    const s = session.fromPartition(part);
+    s.setUserAgent(ua);
+    installSessionPermissionHandlers(s);
+  }
 }
 
 /** Session preloads run in every guest frame (including iframes) before the webview preload. */
-function installGuestLoginSessionPreload() {
+function installGuestLoginSessionPreloadForPartition(part) {
   const guestLoginPath = path.join(__dirname, "renderer", "guest-login-preload.js");
   try {
-    const persist = session.fromPartition(WEB_PARTITION);
+    const persist = session.fromPartition(part);
     if (typeof persist.getPreloads !== "function" || typeof persist.setPreloads !== "function") {
       console.warn("[Nebula] session preloads unavailable; iframe login capture may be limited.");
       return;
@@ -3151,10 +3262,17 @@ app.whenReady().then(async () => {
   maybeResetHttpDiskCacheOnce();
   await ensureWidevineComponentsReady();
   registerAppMenu();
-  configureWebProfileSession();
-  attachDownloadHandlers(session.fromPartition(WEB_PARTITION));
-  await nebulaAdblock.initAdblockEngine(WEB_PARTITION, loadSettings);
-  installGuestLoginSessionPreload();
+  const startupSettings = loadSettings();
+  const browsingPart = browsingPersistPartitionForProfileId(startupSettings.activeProfileId);
+  const incognitoPart = incognitoMemoryPartitionForProfileId(startupSettings.activeProfileId);
+  configureWebProfileSession(browsingPart, incognitoPart);
+  attachDownloadHandlers(session.fromPartition(browsingPart));
+  attachDownloadHandlers(session.fromPartition(incognitoPart));
+  await nebulaAdblock.initAdblockEngine(browsingPart, loadSettings);
+  nebulaAdblock.ensureCosmeticPreloadForGuestPartition(incognitoPart);
+  nebulaAdblock.applyAdblockFromSettings(startupSettings, incognitoPart);
+  installGuestLoginSessionPreloadForPartition(browsingPart);
+  installGuestLoginSessionPreloadForPartition(incognitoPart);
 
   createWindow();
 
@@ -3164,5 +3282,7 @@ app.whenReady().then(async () => {
 });
 
 app.on("window-all-closed", () => {
-  if (process.platform !== "darwin") app.quit();
+  if (process.platform === "darwin") return;
+  if (appRelaunchPending) return;
+  app.quit();
 });

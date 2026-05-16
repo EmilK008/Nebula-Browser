@@ -294,6 +294,17 @@ function applyAdblockFromSettings(settings, webPartition) {
   }
 }
 
+/** Register cosmetic-filter preload bridge on another guest session (e.g. private tabs). */
+function ensureCosmeticPreloadForGuestPartition(webPartition) {
+  if (!webProfileBlocker) return;
+  try {
+    const persist = session.fromPartition(webPartition);
+    ensureRegisterPreloadScript(persist);
+  } catch (err) {
+    console.warn(LOG, "ensureCosmeticPreloadForGuestPartition:", err?.message || err);
+  }
+}
+
 function getBlocker() {
   return webProfileBlocker;
 }
@@ -301,6 +312,7 @@ function getBlocker() {
 module.exports = {
   initAdblockEngine,
   applyAdblockFromSettings,
+  ensureCosmeticPreloadForGuestPartition,
   getBlocker,
   getNetworkFilterListUrls,
   NETWORK_CACHE_FILE,

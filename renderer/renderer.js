@@ -1,14 +1,31 @@
 (() => {
   const HOME_FILE = "welcome.html";
-  const BOOKMARKS_KEY = "nebula-bookmarks-v2";
-  const HISTORY_KEY = "nebula-history-v1";
-  const SESSION_RESTORE_KEY = "nebula-session-restore-v1";
+  const BOOKMARKS_LEGACY_V2 = "nebula-bookmarks-v2";
+
+  function bookmarksStorageKey() {
+    return `nebula-bookmarks-v2-${sanitizeProfileIdForSession(appSettings.activeProfileId)}`;
+  }
+  const HISTORY_LEGACY_V1 = "nebula-history-v1";
+
+  function historyStorageKey() {
+    return `nebula-history-v2-${sanitizeProfileIdForSession(appSettings.activeProfileId)}`;
+  }
+  const SESSION_RESTORE_V1 = "nebula-session-restore-v1";
+
+  function sanitizeProfileIdForSession(raw) {
+    let s = typeof raw === "string" ? raw.trim().toLowerCase() : "";
+    if (!s || s === "default") return "default";
+    s = s.replace(/[^a-z0-9_-]/g, "").slice(0, 48);
+    return s || "default";
+  }
+
+  function sessionRestoreStorageKey() {
+    return `nebula-session-restore-v2-${sanitizeProfileIdForSession(appSettings.activeProfileId)}`;
+  }
   const PASSWORD_SAVE_DENY_KEY = "nebula-password-save-deny-origins-v1";
   const SESSION_VAULT_DENY_KEY = "nebula-session-vault-deny-origins-v1";
   const HISTORY_MAX = 3000;
   const CLOSED_MAX = 25;
-  /** Must match main.js WEB_PARTITION — persistent cookies & login across tabs and restarts. */
-  const WEB_PARTITION = "persist:nebula";
 
   /** Guest page: selection + input/textarea selection (trimmed). */
   const READ_SELECTION_JS = `(function(){
@@ -323,6 +340,13 @@
   const settingsPanelBackdrop = document.getElementById("settings-panel-backdrop");
   const settingsPanelClose = document.getElementById("settings-panel-close");
   const settingsSaveBtn = document.getElementById("settings-save");
+  const settingsProfileSelect = document.getElementById("settings-profile-select");
+  const settingsProfileAdd = document.getElementById("settings-profile-add");
+  const settingsProfileRemove = document.getElementById("settings-profile-remove");
+  const settingsProfileAddPanel = document.getElementById("settings-profile-add-panel");
+  const settingsProfileNewName = document.getElementById("settings-profile-new-name");
+  const settingsProfileAddConfirm = document.getElementById("settings-profile-add-confirm");
+  const settingsProfileAddCancel = document.getElementById("settings-profile-add-cancel");
   const btnSettings = document.getElementById("btn-settings");
   const settingsBookmarksImportSource = document.getElementById("settings-bookmarks-import-source");
   const settingsBookmarksImportMerge = document.getElementById("settings-bookmarks-import-merge");
@@ -402,7 +426,7 @@
   /** @type {Map<string, HTMLElement>} */
   const downloadElById = new Map();
 
-  /** @type {{ id: string, el: Electron.WebviewTag | null, tabEl: HTMLElement, titleEl: HTMLElement, faviconEl: HTMLImageElement, groupId: string | null, guestWcId: number | null, translateBackUrl: string | null, translateInPageActive: boolean, translateInPagePollTimer: number | null, translateInPageTargetLang: string | null, muteBtn: HTMLButtonElement, camBtn: HTMLButtonElement, micBtn: HTMLButtonElement, mediaStrip: HTMLElement, mediaState: { audible: boolean, audioMuted: boolean, camera: boolean, microphone: boolean } }[]} */
+  /** @type {{ id: string, el: Electron.WebviewTag | null, tabEl: HTMLElement, titleEl: HTMLElement, faviconEl: HTMLImageElement, groupId: string | null, guestWcId: number | null, guestPartition: string, isPrivate: boolean, translateBackUrl: string | null, translateInPageActive: boolean, translateInPagePollTimer: number | null, translateInPageTargetLang: string | null, muteBtn: HTMLButtonElement, camBtn: HTMLButtonElement, micBtn: HTMLButtonElement, mediaStrip: HTMLElement, mediaState: { audible: boolean, audioMuted: boolean, camera: boolean, microphone: boolean } }[]} */
   let tabs = [];
   let activeId = null;
   let idSeq = 0;
@@ -448,6 +472,10 @@
     forceDarkMode: false,
     translateEngine: "google-wrap",
     translateLibreUrl: "https://libretranslate.com",
+    activeProfileId: "default",
+    profiles: [{ id: "default", name: "Default" }],
+    browsingPartition: "persist:nebula",
+    incognitoPartition: "nebula-pvt-nebula",
     searchSuggestions: {
       layerOrder: ["past", "local", "remote"],
       enablePastSearch: true,
@@ -473,6 +501,26 @@
 
   function normalizeAppSettings(raw) {
     const o = raw && typeof raw === "object" ? raw : {};
+    const profIn = Array.isArray(o.profiles) ? o.profiles : DEFAULT_APP_SETTINGS.profiles;
+    const profiles = [];
+    const seen = new Set();
+    for (const row of profIn) {
+      if (!row || typeof row !== "object") continue;
+      let id = typeof row.id === "string" ? row.id.trim().toLowerCase() : "";
+      id = id.replace(/[^a-z0-9_-]/g, "").slice(0, 48) || "default";
+      if (id === "default") id = "default";
+      if (seen.has(id)) continue;
+      seen.add(id);
+      const name = typeof row.name === "string" && row.name.trim() ? row.name.trim().slice(0, 64) : id;
+      profiles.push({ id, name });
+    }
+    if (!profiles.some((p) => p.id === "default")) {
+      profiles.unshift({ id: "default", name: "Default" });
+    }
+    let activeProfileId =
+      typeof o.activeProfileId === "string" ? o.activeProfileId.trim().toLowerCase().replace(/[^a-z0-9_-]/g, "").slice(0, 48) : "";
+    if (!activeProfileId) activeProfileId = "default";
+    if (!profiles.some((p) => p.id === activeProfileId)) activeProfileId = "default";
     const merged = {
       adblockEnabled: o.adblockEnabled !== false,
       forceDarkMode: o.forceDarkMode === true,
@@ -481,6 +529,20 @@
         typeof o.translateLibreUrl === "string" && o.translateLibreUrl.trim()
           ? o.translateLibreUrl.trim().slice(0, 512)
           : DEFAULT_APP_SETTINGS.translateLibreUrl,
+      activeProfileId,
+      profiles,
+      browsingPartition:
+        typeof o.browsingPartition === "string" && o.browsingPartition
+          ? o.browsingPartition
+          : activeProfileId === "default"
+            ? "persist:nebula"
+            : `persist:nebula-${activeProfileId}`,
+      incognitoPartition:
+        typeof o.incognitoPartition === "string" && o.incognitoPartition
+          ? o.incognitoPartition
+          : activeProfileId === "default"
+            ? "nebula-pvt-nebula"
+            : `nebula-pvt-${activeProfileId}`,
       searchSuggestions: {
         ...DEFAULT_APP_SETTINGS.searchSuggestions,
         ...(o.searchSuggestions && typeof o.searchSuggestions === "object" ? o.searchSuggestions : {}),
@@ -559,7 +621,11 @@
 
   function loadSavedSession() {
     try {
-      const raw = localStorage.getItem(SESSION_RESTORE_KEY);
+      const key = sessionRestoreStorageKey();
+      let raw = localStorage.getItem(key);
+      if (!raw && sanitizeProfileIdForSession(appSettings.activeProfileId) === "default") {
+        raw = localStorage.getItem(SESSION_RESTORE_V1);
+      }
       if (!raw) return null;
       const p = JSON.parse(raw);
       if (!p || typeof p !== "object" || !Array.isArray(p.tabs)) return null;
@@ -573,7 +639,7 @@
 
   function clearSavedSession() {
     try {
-      localStorage.removeItem(SESSION_RESTORE_KEY);
+      localStorage.removeItem(sessionRestoreStorageKey());
     } catch {
       /* */
     }
@@ -977,6 +1043,7 @@
       tabCtxMenu.appendChild(b);
     };
     mk("New tab group", () => newTabGroupFromTab(tabId), false);
+    mk("New private tab", () => createTab(homeUrl(), { private: true }), false);
     mk("Remove from group", () => removeTabFromGroup(tabId), !t?.groupId);
     mk("Edit this group…", () => t?.groupId && openTabGroupRenameDialog(t.groupId), !t?.groupId);
     mk("Close tabs in this group", () => t?.groupId && closeAllTabsInGroup(t.groupId), !t?.groupId);
@@ -1082,7 +1149,8 @@
   function saveSessionSnapshot() {
     if (!sessionPersistenceReady) return;
     try {
-      const tabPayload = tabs.map((t) => {
+      const persistTabs = tabs.filter((t) => !t.isPrivate);
+      const tabPayload = persistTabs.map((t) => {
         let u = "";
         try {
           u = t.el.getURL() || "";
@@ -1091,16 +1159,17 @@
         }
         return { url: u, groupId: t.groupId || null };
       });
-      let ai = tabs.findIndex((x) => x.id === activeId);
+      let ai = persistTabs.findIndex((x) => x.id === activeId);
       if (ai < 0) ai = 0;
-      const groups = tabGroups.filter((g) => tabs.some((t) => t.groupId === g.id));
+      if (persistTabs.length > 0 && ai >= persistTabs.length) ai = persistTabs.length - 1;
+      const groups = tabGroups.filter((g) => persistTabs.some((t) => t.groupId === g.id));
       const data = {
         version: 2,
         tabs: tabPayload,
         activeIndex: ai,
         groups,
       };
-      localStorage.setItem(SESSION_RESTORE_KEY, JSON.stringify(data));
+      localStorage.setItem(sessionRestoreStorageKey(), JSON.stringify(data));
     } catch {
       /* */
     }
@@ -1168,6 +1237,7 @@
       const row = saved.tabs[i];
       const u = row && typeof row.url === "string" ? row.url.trim() : "";
       if (!u) continue;
+      if (row && row.private === true) continue;
       let gid = null;
       if (saved.version >= 2 && row && typeof row.groupId === "string" && tabGroups.some((x) => x.id === row.groupId)) {
         gid = row.groupId;
@@ -1530,6 +1600,8 @@
   }
 
   function scheduleSessionVaultOfferCheck(tabId) {
+    const tab0 = tabs.find((t) => t.id === tabId);
+    if (tab0?.isPrivate) return;
     if (tabId !== activeId) return;
     if (sessionVaultOfferTimerId != null) {
       clearTimeout(sessionVaultOfferTimerId);
@@ -1586,6 +1658,8 @@
   }
 
   function considerLoginCaptureForVault(tabId, payload) {
+    const tab0 = tabs.find((t) => t.id === tabId);
+    if (tab0?.isPrivate) return;
     if (!payload || typeof payload !== "object") return;
     let origin = "";
     try {
@@ -2044,7 +2118,18 @@
 
   function loadHistoryFromStorage() {
     try {
-      const raw = localStorage.getItem(HISTORY_KEY);
+      const key = historyStorageKey();
+      let raw = localStorage.getItem(key);
+      if (!raw && sanitizeProfileIdForSession(appSettings.activeProfileId) === "default") {
+        raw = localStorage.getItem(HISTORY_LEGACY_V1);
+        if (raw) {
+          try {
+            localStorage.setItem(key, raw);
+          } catch {
+            /* ignore quota */
+          }
+        }
+      }
       const arr = raw ? JSON.parse(raw) : [];
       if (!Array.isArray(arr)) return [];
       return arr
@@ -2060,7 +2145,7 @@
   }
 
   function saveHistoryToStorage(entries) {
-    localStorage.setItem(HISTORY_KEY, JSON.stringify(entries.slice(0, HISTORY_MAX)));
+    localStorage.setItem(historyStorageKey(), JSON.stringify(entries.slice(0, HISTORY_MAX)));
   }
 
   function removeHistoryEntry(url, visitedAt) {
@@ -2086,7 +2171,7 @@
 
   function tryRecordHistoryForTab(tabId) {
     const tab = tabs.find((x) => x.id === tabId);
-    if (!tab) return;
+    if (!tab || tab.isPrivate) return;
     let url = "";
     try {
       url = tab.el.getURL() || "";
@@ -2457,6 +2542,20 @@
       }
       if (!found) sel.selectedIndex = 0;
     }
+    const ps = settingsProfileSelect;
+    if (ps) {
+      ps.innerHTML = "";
+      const plist = Array.isArray(s.profiles) && s.profiles.length ? s.profiles : DEFAULT_APP_SETTINGS.profiles;
+      for (const p of plist) {
+        if (!p || typeof p.id !== "string") continue;
+        const o = document.createElement("option");
+        o.value = p.id;
+        o.textContent = typeof p.name === "string" && p.name ? p.name : p.id;
+        ps.appendChild(o);
+      }
+      const want = s.activeProfileId || "default";
+      ps.value = plist.some((x) => x && x.id === want) ? want : "default";
+    }
   }
 
   function gatherSettingsPatchFromForm() {
@@ -2479,6 +2578,12 @@
         /* */
       }
     }
+    let activeProfileId = appSettings.activeProfileId || "default";
+    const ps = settingsProfileSelect;
+    if (ps && typeof ps.value === "string") {
+      const v = ps.value.trim().toLowerCase();
+      if ((appSettings.profiles || []).some((p) => p && p.id === v)) activeProfileId = v;
+    }
     return {
       adblockEnabled: !!(document.getElementById("settings-adblock-enabled")?.checked),
       forceDarkMode: !!(document.getElementById("settings-force-dark-mode")?.checked),
@@ -2487,6 +2592,7 @@
           ? "libre"
           : "google-wrap",
       translateLibreUrl: String(document.getElementById("settings-translate-libre-url")?.value || "").trim(),
+      activeProfileId,
       searchSuggestions: {
         enablePastSearch: chk("settings-ss-past"),
         enableBookmarks: chk("settings-ss-bookmarks"),
@@ -2504,8 +2610,59 @@
     };
   }
 
+  function hideProfileAddPanel() {
+    if (settingsProfileAddPanel) settingsProfileAddPanel.hidden = true;
+    if (settingsProfileNewName) settingsProfileNewName.value = "";
+  }
+
+  function showProfileAddPanel() {
+    if (!settingsProfileAddPanel || !settingsProfileNewName) return;
+    settingsProfileAddPanel.hidden = false;
+    queueMicrotask(() => {
+      settingsProfileNewName.focus();
+      try {
+        settingsProfileNewName.select();
+      } catch {
+        /* */
+      }
+    });
+  }
+
+  async function commitNewProfileFromInput() {
+    const raw = String(settingsProfileNewName?.value || "").trim().slice(0, 64);
+    if (!raw) {
+      alert("Enter a name for the new profile.");
+      return;
+    }
+    let id = raw
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 48);
+    if (!id || id === "default") id = "p" + Date.now().toString(36).slice(-8);
+    const profiles = [...(appSettings.profiles || [])];
+    if (profiles.some((p) => p && p.id === id)) {
+      alert("A profile with that id already exists. Pick a different name.");
+      return;
+    }
+    profiles.push({ id, name: raw });
+    hideProfileAddPanel();
+    if (window.nebula?.setSettings) {
+      try {
+        const next = await window.nebula.setSettings({ profiles });
+        appSettings = normalizeAppSettings(next);
+      } catch {
+        appSettings = normalizeAppSettings({ ...appSettings, profiles });
+      }
+    } else {
+      appSettings = normalizeAppSettings({ ...appSettings, profiles });
+    }
+    populateSettingsForm();
+  }
+
   function closeSettingsPanel() {
     if (!settingsPanel || settingsPanel.hidden) return;
+    hideProfileAddPanel();
     closeChangelogPanel();
     closePasswordSaveOfferPanel();
     closeVaultPanel();
@@ -2523,6 +2680,7 @@
     if (historyPanel && !historyPanel.hidden) closeHistoryPanel();
     if (sitePermPanel && !sitePermPanel.hidden) closeSitePermissionsPanel();
     hideOmniboxSuggestions();
+    hideProfileAddPanel();
     populateSettingsForm();
     settingsPanel.hidden = false;
     settingsPanel.setAttribute("aria-hidden", "false");
@@ -2540,6 +2698,7 @@
 
   async function saveSettingsFromForm() {
     const prevForceDark = appSettings.forceDarkMode === true;
+    const prevProfileId = appSettings.activeProfileId || "default";
     const patch = gatherSettingsPatchFromForm();
     if (window.nebula?.setSettings) {
       try {
@@ -2555,7 +2714,12 @@
     closeSettingsPanel();
     refreshOmniboxSuggestions();
     void refreshTranslationKeyStatus();
+    const profileChanged = prevProfileId !== (appSettings.activeProfileId || "default");
     const nextForceDark = appSettings.forceDarkMode === true;
+    if (profileChanged && typeof window.nebula?.relaunchApp === "function") {
+      void window.nebula.relaunchApp();
+      return;
+    }
     if (prevForceDark !== nextForceDark && typeof window.nebula?.relaunchApp === "function") {
       if (
         window.confirm(
@@ -2581,7 +2745,18 @@
 
   function loadBookmarksFromStorage() {
     try {
-      const raw = localStorage.getItem(BOOKMARKS_KEY);
+      const key = bookmarksStorageKey();
+      let raw = localStorage.getItem(key);
+      if (!raw && sanitizeProfileIdForSession(appSettings.activeProfileId) === "default") {
+        raw = localStorage.getItem(BOOKMARKS_LEGACY_V2);
+        if (raw) {
+          try {
+            localStorage.setItem(key, raw);
+          } catch {
+            /* ignore quota */
+          }
+        }
+      }
       const arr = raw ? JSON.parse(raw) : [];
       return Array.isArray(arr)
         ? arr.filter((x) => x && typeof x.url === "string").map((x) => ({ url: x.url, title: x.title || "" }))
@@ -2592,7 +2767,7 @@
   }
 
   function saveBookmarksToStorage() {
-    localStorage.setItem(BOOKMARKS_KEY, JSON.stringify(bookmarks));
+    localStorage.setItem(bookmarksStorageKey(), JSON.stringify(bookmarks));
   }
 
   function normalizeBookmarkUrl(url) {
@@ -4305,11 +4480,22 @@
       opts && opts.groupId && typeof opts.groupId === "string" && tabGroups.some((g) => g.id === opts.groupId)
         ? opts.groupId
         : null;
+    const isPrivate = !!(opts && opts.private);
+    const inheritedPart =
+      opts && typeof opts.partition === "string" && opts.partition.trim() ? opts.partition.trim() : null;
+    const guestPartition =
+      inheritedPart ||
+      (isPrivate
+        ? appSettings.incognitoPartition || DEFAULT_APP_SETTINGS.incognitoPartition
+        : appSettings.browsingPartition || DEFAULT_APP_SETTINGS.browsingPartition);
 
     const tabEl = document.createElement("div");
     tabEl.className = "tab";
     tabEl.dataset.tabId = id;
-    tabEl.title = "Drag to reorder · drop on a group header to join it · drop outside groups to leave · right-click for menu";
+    tabEl.title = isPrivate
+      ? "Private tab — cookies and site data are cleared when you close Nebula. Not included in session restore. Drag to reorder…"
+      : "Drag to reorder · drop on a group header to join it · drop outside groups to leave · right-click for menu";
+    if (isPrivate) tabEl.classList.add("tab--private");
     const faviconEl = document.createElement("img");
     faviconEl.className = "tab-favicon";
     faviconEl.alt = "";
@@ -4365,6 +4551,8 @@
       faviconEl,
       groupId: optGid,
       guestWcId: null,
+      guestPartition,
+      isPrivate,
       translateBackUrl: null,
       translateInPageActive: false,
       translateInPagePollTimer: null,
@@ -4461,7 +4649,7 @@
       if (pp) el.setAttribute("preload", pp);
     }
     el.setAttribute("src", url);
-    el.setAttribute("partition", WEB_PARTITION);
+    el.setAttribute("partition", guestPartition);
     el.setAttribute("allowpopups", "true");
     el.setAttribute("allowfullscreen", "true");
     el.setAttribute(
@@ -4483,7 +4671,9 @@
         const wid = typeof el.getWebContentsId === "function" ? el.getWebContentsId() : 0;
         if (wid) {
           entry.guestWcId = wid;
-          if (window.nebula?.registerGuestWindowOpen) void window.nebula.registerGuestWindowOpen(wid);
+          if (window.nebula?.registerGuestWindowOpen) {
+            void window.nebula.registerGuestWindowOpen({ guestWebContentsId: wid, partition: guestPartition });
+          }
           if (window.nebula?.registerGuestMedia) void window.nebula.registerGuestMedia(wid);
         }
       } catch {
@@ -4578,7 +4768,7 @@
     });
     el.addEventListener("did-navigate-in-page", (e) => {
       const u = e.url || "";
-      if (u && !shouldSkipHistoryUrl(u)) {
+      if (u && !shouldSkipHistoryUrl(u) && !entry.isPrivate) {
         recordHistoryVisit(u, titleEl.textContent || "");
       }
       if (activeId === id) {
@@ -4721,6 +4911,9 @@
     switch (action) {
       case "new-tab":
         createTab(homeUrl());
+        break;
+      case "new-private-tab":
+        createTab(homeUrl(), { private: true });
         break;
       case "close-tab":
         if (activeId) removeTab(activeId);
@@ -4904,6 +5097,44 @@
   settingsPanelClose?.addEventListener("click", () => closeSettingsPanel());
   settingsPanelBackdrop?.addEventListener("click", () => closeSettingsPanel());
   settingsSaveBtn?.addEventListener("click", () => void saveSettingsFromForm());
+  settingsProfileAdd?.addEventListener("click", () => showProfileAddPanel());
+  settingsProfileAddCancel?.addEventListener("click", () => hideProfileAddPanel());
+  settingsProfileAddConfirm?.addEventListener("click", () => void commitNewProfileFromInput());
+  settingsProfileNewName?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      void commitNewProfileFromInput();
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      hideProfileAddPanel();
+    }
+  });
+  settingsProfileRemove?.addEventListener("click", () => {
+    const sel = settingsProfileSelect;
+    const rid = sel && typeof sel.value === "string" ? sel.value.trim().toLowerCase() : "";
+    if (!rid || rid === "default") {
+      alert("The Default profile cannot be removed.");
+      return;
+    }
+    const profiles = (appSettings.profiles || []).filter((p) => p && p.id !== rid);
+    if (profiles.length === (appSettings.profiles || []).length) return;
+    if (!window.confirm(`Remove browsing profile “${rid}” from the list? Its data folder stays on disk until you delete it manually from Nebula’s userData Partitions.`)) return;
+    void (async () => {
+      const patch = { profiles };
+      if ((appSettings.activeProfileId || "default") === rid) patch.activeProfileId = "default";
+      if (window.nebula?.setSettings) {
+        try {
+          const next = await window.nebula.setSettings(patch);
+          appSettings = normalizeAppSettings(next);
+        } catch {
+          appSettings = normalizeAppSettings({ ...appSettings, ...patch });
+        }
+      } else {
+        appSettings = normalizeAppSettings({ ...appSettings, ...patch });
+      }
+      populateSettingsForm();
+    })();
+  });
   document.getElementById("settings-translate-save-key")?.addEventListener("click", async () => {
     const keyEl = document.getElementById("settings-translate-api-key");
     const key = keyEl?.value?.trim() || "";
@@ -5212,8 +5443,8 @@
   });
 
   historyClearBtn?.addEventListener("click", () => {
-    if (!confirm("Clear all history in Nebula?")) return;
-    localStorage.removeItem(HISTORY_KEY);
+    if (!confirm("Clear all history for this browsing profile?")) return;
+    localStorage.removeItem(historyStorageKey());
     renderHistoryList();
   });
 
@@ -5253,6 +5484,11 @@
           closeTranslatePanel();
           return;
         }
+      }
+      if (!e.repeat && (e.key === "n" || e.key === "N") && e.shiftKey && (e.ctrlKey || e.metaKey) && !e.altKey) {
+        e.preventDefault();
+        createTab(homeUrl(), { private: true });
+        return;
       }
       if (settingsShortcutMatch(e)) {
         e.preventDefault();
@@ -5427,7 +5663,8 @@
     window.nebula.onOpenUrlInTab((payload) => {
       const u = typeof payload?.url === "string" ? payload.url.trim() : "";
       if (!u) return;
-      createTab(u);
+      const part = typeof payload?.partition === "string" ? payload.partition.trim() : "";
+      createTab(u, part ? { partition: part } : {});
     });
   }
 
@@ -5441,8 +5678,6 @@
     queueMicrotask(() => focusActiveWebviewGuest({ forWindow: true }));
   });
 
-  bookmarks = loadBookmarksFromStorage();
-  renderBookmarksBar();
   wireSplitDropZones();
   wireSplitResizer();
   wireTabStripReorderAndContext();
@@ -5453,6 +5688,8 @@
 
   syncYoutubeAdSkipAdblockState();
   void loadAppSettings().then(() => {
+    bookmarks = loadBookmarksFromStorage();
+    renderBookmarksBar();
     tryOfferSessionRestoreOnLaunch();
     setNavButtons();
     updateLoadingUI();

@@ -700,6 +700,39 @@
               </div>
             </section>
             <section class="settings-section">
+              <h3 class="settings-section-title">Profiles &amp; private tabs</h3>
+              <p class="settings-hint">
+                <strong>Profiles</strong> use separate cookies, saved sessions, <strong>bookmarks</strong>, and <strong>history</strong> (each profile has its own bar, address suggestions, and local storage keys). Switch profile below, click Save, and Nebula will restart automatically. Default migrates your previous global bookmarks and history the first time they load.
+                <strong>Private tabs</strong> use a temporary session (Tab → New private tab or Ctrl+Shift+N); they are not restored after quit.
+              </p>
+              <label class="settings-field">
+                <span class="settings-label">Active profile</span>
+                <select id="settings-profile-select" class="settings-select"></select>
+              </label>
+              <div class="settings-bookmarks-row">
+                <button type="button" class="settings-action-btn" id="settings-profile-add">Add profile…</button>
+                <button type="button" class="settings-action-btn" id="settings-profile-remove">Remove selected</button>
+              </div>
+              <div id="settings-profile-add-panel" class="settings-profile-add-panel" hidden>
+                <label class="settings-field">
+                  <span class="settings-label">New profile name</span>
+                  <input
+                    type="text"
+                    id="settings-profile-new-name"
+                    class="settings-input"
+                    maxlength="64"
+                    placeholder="e.g. Work"
+                    spellcheck="false"
+                    autocomplete="off"
+                  />
+                </label>
+                <div class="settings-bookmarks-row">
+                  <button type="button" class="settings-save-btn" id="settings-profile-add-confirm">Create profile</button>
+                  <button type="button" class="settings-action-btn" id="settings-profile-add-cancel">Cancel</button>
+                </div>
+              </div>
+            </section>
+            <section class="settings-section">
               <h3 class="settings-section-title">Privacy</h3>
               <p class="settings-hint">
                 Saved passwords are stored only on this device. Use View → Saved passwords or the button below. Nebula can also

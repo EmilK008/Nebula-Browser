@@ -1,6 +1,21 @@
 {
   "entries": [
     {
+      "version": "0.7.0",
+      "date": "2026-05-16",
+      "added": [
+        "Browsing profiles (Settings → Profiles & private tabs): separate Chromium storage, session restore, bookmarks, and history per profile; Default keeps existing `persist:nebula` cookies and migrates the previous global bookmark and history lists once.",
+        "Private tabs: Tab → New private tab, Ctrl+Shift+N (Cmd+Shift+N on macOS), or the tab strip context menu — in-memory partition, no session restore, no history writes, and login capture / session-vault prompts are skipped.",
+        "window.open from a tab inherits that tab’s storage partition so OAuth popups and new tabs stay in the same cookie jar."
+      ],
+      "fixes": [
+        "Add profile: replaced `window.prompt` with an inline name field under Settings (prompts often opened behind the settings layer in Electron, so Add profile appeared to do nothing).",
+        "Profiles: changing the active profile and saving now restarts Nebula immediately (no extra confirmation). Bookmarks are stored per profile (`nebula-bookmarks-v2-<profile>`); the Default profile copies from the legacy `nebula-bookmarks-v2` key on first load if the per-profile store is empty.",
+        "Profile switch relaunch: on Windows, `window-all-closed` no longer calls `app.quit()` during an intentional `app.relaunch()`, so the app reliably starts again after switching profile (or force-dark restart). Portable builds use `PORTABLE_EXECUTABLE_FILE` as `app.relaunch({ execPath, args })` because `process.execPath` is not the user’s portable .exe.",
+        "History is stored per profile (`nebula-history-v2-<profile>`); Default migrates from legacy `nebula-history-v1` once when the per-profile store is empty."
+      ]
+    },
+    {
       "version": "0.6.2",
       "date": "2026-05-16",
       "added": [
