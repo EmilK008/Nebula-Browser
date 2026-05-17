@@ -416,30 +416,113 @@ function runDetachedWindowsInstaller(exePath) {
 }
 
 /**
+ * Same rule as `relaunchOptionsForPortableWindows`: portable builds must relaunch the user’s real
+ * .exe, not only `process.execPath` (which can point at an extracted runtime).
+ * @returns {string}
+ */
+function windowsRelaunchExecutablePath() {
+  if (process.platform !== "win32") return process.execPath;
+  const portable =
+    typeof process.env.PORTABLE_EXECUTABLE_FILE === "string" ? process.env.PORTABLE_EXECUTABLE_FILE.trim() : "";
+  if (portable) {
+    try {
+      if (fs.existsSync(portable)) return portable;
+    } catch {
+      /* */
+    }
+  }
+  return process.execPath;
+}
+
+/**
+ * Escape a string for use inside VBScript double-quoted literals (`"` → `""`).
+ * @param {string} s
+ */
+function escapeVbsStringLiteral(s) {
+  return String(s).replace(/"/g, '""');
+}
+
+/**
  * After Nebula quits, the NSIS `/S` installer usually does not relaunch the app.
- * Spawn a detached PowerShell one-shot that waits for this process to exit, allows time
- * for the installer to finish, then starts the installed exe again (same path post-upgrade).
+ * Writes a short `.vbs` under userData and runs it with `%SystemRoot%\System32\wscript.exe`
+ * (no console). The script polls WMI `Win32_Process` for the old PID, sleeps for NSIS to
+ * finish, then `WScript.Shell.Run`s Nebula. Avoids `cmd.exe`, pipes, PATH-shadowed `find`, and
+ * visible `timeout`/`ping` consoles.
  */
 function spawnWindowsPostUpdateRelaunchHelper() {
   if (process.platform !== "win32" || !app.isPackaged) return;
-  const pid = process.pid;
-  const exeQuoted = JSON.stringify(process.execPath);
-  const ps = [
-    "$ErrorActionPreference='SilentlyContinue'",
-    `while (Get-Process -Id ${pid} -ErrorAction SilentlyContinue) { Start-Sleep -Milliseconds 300 }`,
-    "Start-Sleep -Seconds 6",
-    `Start-Process -FilePath ${exeQuoted}`,
-  ].join(";");
+  const targetPid = process.pid;
+  const exePath = windowsRelaunchExecutablePath();
+  const cwdPath = path.dirname(exePath);
+  const ex = escapeVbsStringLiteral(exePath);
+  const cw = escapeVbsStringLiteral(cwdPath);
+  const vbsPath = path.join(app.getPath("userData"), `nebula-update-relaunch-${targetPid}-${Date.now()}.vbs`);
+  const lines = [
+    "REM Nebula post-update relaunch (headless; WMI wait + NSIS settle).",
+    "Option Explicit",
+    `Const TARGET_PID = ${targetPid}`,
+    "Dim EXE_PATH, EXE_DIR, sh, n",
+    `EXE_PATH = "${ex}"`,
+    `EXE_DIR = "${cw}"`,
+    'Set sh = CreateObject("WScript.Shell")',
+    "n = 0",
+    "Do While ProcessExists(TARGET_PID)",
+    "  n = n + 1",
+    "  If n > 360 Then Exit Do",
+    "  WScript.Sleep 1000",
+    "Loop",
+    "WScript.Sleep 55000",
+    "sh.CurrentDirectory = EXE_DIR",
+    "sh.Run Chr(34) & EXE_PATH & Chr(34), 1, False",
+    "On Error Resume Next",
+    'CreateObject("Scripting.FileSystemObject").DeleteFile WScript.ScriptFullName, True',
+    "",
+    "Function ProcessExists(p)",
+    "  Dim svc, col, x",
+    "  On Error Resume Next",
+    "  ProcessExists = False",
+    '  Set svc = GetObject("winmgmts:{impersonationLevel=impersonate}!\\\\.\\root\\cimv2")',
+    "  If Err.Number <> 0 Then",
+    "    Err.Clear",
+    "    ProcessExists = True",
+    "    Exit Function",
+    "  End If",
+    "  Set col = svc.ExecQuery(\"SELECT ProcessId FROM Win32_Process WHERE ProcessId=\" & CStr(p))",
+    "  If Err.Number <> 0 Then",
+    "    Err.Clear",
+    "    ProcessExists = True",
+    "    Exit Function",
+    "  End If",
+    "  For Each x In col",
+    "    ProcessExists = True",
+    "    Exit For",
+    "  Next",
+    "End Function",
+  ];
   try {
-    const child = spawn(
-      "powershell.exe",
-      ["-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-Command", ps],
-      { detached: true, stdio: "ignore" }
-    );
-    child.on("error", (e) => console.warn("[Nebula] post-update relaunch helper:", e?.message || e));
-    child.unref();
+    const body = lines.join("\r\n");
+    fs.writeFileSync(vbsPath, Buffer.from(`\uFEFF${body}`, "utf16le"));
   } catch (e) {
-    console.warn("[Nebula] post-update relaunch helper:", e?.message || e);
+    console.warn("[Nebula] post-update relaunch helper write vbs:", e?.message || e);
+    return;
+  }
+  const wscript = path.join(process.env.SystemRoot || "C:\\Windows", "System32", "wscript.exe");
+  try {
+    const child = spawn(wscript, ["//NoLogo", vbsPath], {
+      detached: true,
+      stdio: "ignore",
+      windowsHide: true,
+    });
+    child.on("error", (e) => console.warn("[Nebula] post-update relaunch helper:", e?.message || e));
+    child.once("spawn", () => {
+      try {
+        child.unref();
+      } catch {
+        /* */
+      }
+    });
+  } catch (e) {
+    console.warn("[Nebula] post-update relaunch helper spawn:", e?.message || e);
   }
 }
 
@@ -688,7 +771,7 @@ ipcMain.handle("nebula-start-windows-installer-update", async (event, payload) =
     title: "Install update",
     message: "Nebula will download the update, quit, run the Windows installer, then try to open Nebula again when the upgrade finishes.",
     detail:
-      "The installer usually runs silently (/S). Nebula waits for the install to finish, then starts the app from the same shortcut path. If nothing opens, launch Nebula from the Start menu or run the installer again from the release page. You may be prompted by Windows (UAC).",
+      "The installer usually runs silently (/S). A small detached helper waits for Nebula to exit, then for the installer to finish replacing files (often about a minute), then starts the app again from the same path. If nothing opens, launch Nebula from the Start menu or run the installer again from the release page. You may be prompted by Windows (UAC).",
     buttons: ["Continue", "Cancel"],
     defaultId: 0,
     cancelId: 1,
@@ -729,7 +812,7 @@ ipcMain.handle("nebula-start-windows-installer-update", async (event, payload) =
     } catch {
       /* */
     }
-  }, 450);
+  }, 2600);
   return { ok: true };
 });
 

@@ -1,29 +1,29 @@
 {
   "entries": [
     {
-      "version": "0.9.3",
-      "date": "2026-05-08",
+      "version": "0.10.1",
+      "date": "2026-05-17",
+      "improvements": [
+        "Windows NSIS in-app update: after you install from the built-in updater, Nebula starts again without hunting for the Start menu shortcut. A small UTF-16 LE VBScript is run with `%SystemRoot%\\System32\\wscript.exe` (no console window). It polls WMI until the old process is gone, waits for the silent installer to finish replacing files, then launches the right executable and working directory—including `PORTABLE_EXECUTABLE_FILE` when that is the real launcher path. Earlier helpers (PowerShell, batch with `tasklist`/`find`/`ping`, Git's GNU `find` on `PATH`, and UTF-8 `.vbs` with a UTF-8 BOM) were replaced so this works reliably on typical developer machines."
+      ]
+    },
+    {
+      "version": "0.10.0",
+      "date": "2026-05-17",
       "added": [
         "AI assistant: Summarize tab — a button in the assistant drawer reads the active tab as plain text (http/https pages only, same excerpt size cap as tab tools), then streams a concise summary using your selected provider and model. The home / welcome tab is excluded."
       ]
     },
     {
-      "version": "0.9.2",
-      "date": "2026-05-08",
-      "improvements": [
-        "Windows NSIS in-app update: after the silent installer runs, Nebula tries to start again automatically (detached helper waits for the old process to exit, then launches the installed exe path). If it does not reopen, use the Start menu or the release page as before."
-      ]
-    },
-    {
       "version": "0.9.1",
-      "date": "2026-05-08",
+      "date": "2026-05-17",
       "improvements": [
         "VPN helper panel: provider list plus “Try open VPN app” and “Get client” only — the in-panel proxy routing checkbox was removed so the helper stays focused on launching or downloading your provider’s app. Tab traffic still follows Settings → Network & proxy (direct, system, or fixed rules)."
       ]
     },
     {
       "version": "0.9.0",
-      "date": "2026-05-08",
+      "date": "2026-05-17",
       "added": [
         "AI assistant: optional toolbar button opens a side chat panel (OpenAI-, Anthropic-, or Gemini-style APIs) so you can ask questions in plain language; API keys are stored in the vault like translation keys, and requests run from Nebula’s main process.",
         "Settings → AI assistant: save or remove per-provider keys, set an OpenAI-compatible base URL, and add custom model ids (one per line) that appear alongside suggested models in the assistant.",
