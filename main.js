@@ -110,6 +110,67 @@ app.commandLine.appendSwitch("disk-cache-size", String(128 * 1024 * 1024));
 /** Some networks reset QUIC mid-handshake (net_error -101 during TLS). */
 app.commandLine.appendSwitch("disable-quic");
 
+const NEBULA_USERDATA_DIR_NAME =
+  typeof NEBULA_PKG.name === "string" && NEBULA_PKG.name.trim() ? NEBULA_PKG.name.trim() : "nebula-browser";
+
+/**
+ * electron-builder portable sets `PORTABLE_EXECUTABLE_FILE`. Prefer the normal OS userData
+ * directory when it already exists (shared profile with an installed build). Otherwise use a
+ * `nebula-portable-data` folder next to the exe; if settings still live in the exe directory from
+ * an older portable layout, keep using that path so data is not left behind.
+ */
+function resolveStandardOsUserDataDir() {
+  if (process.platform === "win32") {
+    const roaming = process.env.APPDATA || path.join(os.homedir(), "AppData", "Roaming");
+    return path.join(roaming, NEBULA_USERDATA_DIR_NAME);
+  }
+  if (process.platform === "darwin") {
+    return path.join(os.homedir(), "Library", "Application Support", NEBULA_USERDATA_DIR_NAME);
+  }
+  const cfg = process.env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config");
+  return path.join(cfg, NEBULA_USERDATA_DIR_NAME);
+}
+
+function applyPortableUserDataPathIfNeeded() {
+  const portableFile =
+    typeof process.env.PORTABLE_EXECUTABLE_FILE === "string" ? process.env.PORTABLE_EXECUTABLE_FILE.trim() : "";
+  if (!portableFile || !app.isPackaged) return;
+
+  let portableRoot =
+    typeof process.env.PORTABLE_EXECUTABLE_DIR === "string" ? process.env.PORTABLE_EXECUTABLE_DIR.trim() : "";
+  if (!portableRoot) {
+    try {
+      portableRoot = path.dirname(portableFile);
+    } catch {
+      return;
+    }
+  }
+
+  const besideData = path.join(portableRoot, "nebula-portable-data");
+  const standard = resolveStandardOsUserDataDir();
+
+  let chosen = besideData;
+  try {
+    if (fs.existsSync(standard)) {
+      const st = fs.statSync(standard);
+      if (st.isDirectory()) chosen = standard;
+    } else if (fs.existsSync(path.join(portableRoot, "nebula-settings.json"))) {
+      chosen = portableRoot;
+    }
+  } catch {
+    /* */
+  }
+
+  try {
+    app.setPath("userData", chosen);
+    if (chosen === besideData) fs.mkdirSync(besideData, { recursive: true });
+  } catch (e) {
+    console.warn("[Nebula] portable userData:", e?.message || e);
+  }
+}
+
+applyPortableUserDataPathIfNeeded();
+
 /**
  * Auto dark theme for web contents (Chromium). Must be set before the app is ready; toggling in
  * Settings saves the flag and offers a restart so this switch applies on the next launch.

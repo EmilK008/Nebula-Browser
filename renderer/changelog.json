@@ -1,6 +1,13 @@
 {
   "entries": [
     {
+      "version": "0.10.2",
+      "date": "2026-05-17",
+      "improvements": [
+        "Windows / macOS / Linux portable build: profile data uses a `nebula-portable-data` folder next to the portable executable when the usual Nebula userData folder does not exist yet (for example `%AppData%\\Roaming\\nebula-browser` on Windows). If that standard folder already exists—often because you also use the installer build—the portable exe reuses it so you keep one profile. If you already ran an older portable that stored `nebula-settings.json` next to the exe, that layout is still honored. Installed (NSIS) builds are unchanged."
+      ]
+    },
+    {
       "version": "0.10.1",
       "date": "2026-05-17",
       "improvements": [
