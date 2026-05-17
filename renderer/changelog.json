@@ -1,6 +1,22 @@
 {
   "entries": [
     {
+      "version": "0.9.0",
+      "date": "2026-05-08",
+      "added": [
+        "AI assistant: optional toolbar button opens a side chat panel (OpenAI-, Anthropic-, or Gemini-style APIs) so you can ask questions in plain language; API keys are stored in the vault like translation keys, and requests run from Nebula’s main process.",
+        "Settings → AI assistant: save or remove per-provider keys, set an OpenAI-compatible base URL, and add custom model ids (one per line) that appear alongside suggested models in the assistant.",
+        "AI assistant: Enter sends a message, Shift+Enter inserts a new line; conversations are saved after each reply (and with Save), can be switched or deleted from the drawer, and are stored in local storage per browsing profile.",
+        "AI assistant: a short “Thinking” indicator while the model responds, and streamed assistant text so replies grow in place instead of appearing all at once (OpenAI-, Anthropic-, and Gemini-style streaming APIs).",
+        "AI assistant: optional web search via a `web_search` tool (Brave Search API key in the vault; enable under Settings → AI assistant); tool rounds run in the main process, then the final answer streams as usual.",
+        "AI assistant: optional `fetch_page_text` tool (Tier A) — with “Page text fetch” enabled in Settings, the model can request public http(s) URLs; Nebula fetches HTML in the main process, strips tags to plain text (capped), with no cookies and blocked private IPs.",
+        "AI assistant: optional tab agent (Tier C) — with “Allow assistant to open tabs and read tab text” in Settings, the model can use `open_browser_tab` and `read_browser_tab_text` on real Nebula tabs (profile cookies and JS). You can require a confirm dialog before each assisted navigation (default on)."
+      ],
+      "fixes": [
+        "AI assistant web search: call Brave’s documented Web Search URL (`/res/v1/web/search`); the previous path returned non-JSON so the tool reported “invalid JSON.”"
+      ]
+    },
+    {
       "version": "0.8.0",
       "date": "2026-05-17",
       "added": [

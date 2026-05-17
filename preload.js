@@ -1,5 +1,8 @@
 const { contextBridge, ipcRenderer } = require("electron");
 
+/** @type {((_event: import("electron").IpcRendererEvent, msg: unknown) => void) | null} */
+let aiTabToolRunListener = null;
+
 contextBridge.exposeInMainWorld("nebula", {
   platform: process.platform,
   isMac: process.platform === "darwin",
@@ -186,6 +189,97 @@ contextBridge.exposeInMainWorld("nebula", {
   translationStatus: () => ipcRenderer.invoke("nebula-translation-status"),
   translationSaveKey: (payload) => ipcRenderer.invoke("nebula-translation-save-key", payload ?? {}),
   translationTranslateTexts: (payload) => ipcRenderer.invoke("nebula-translation-translate-texts", payload ?? {}),
+  aiStatus: () => ipcRenderer.invoke("nebula-ai-status"),
+  aiSaveKey: (payload) => ipcRenderer.invoke("nebula-ai-save-key", payload ?? {}),
+  /**
+   * Tier C: main sends `nebula-ai-tab-tool-run`; handler runs in the shell and must return `{ ok, ... }`.
+   * @param {(msg: Record<string, unknown>) => Promise<Record<string, unknown>>} handler
+   * @returns {() => void} unsubscribe
+   */
+  registerAiTabToolHandler(handler) {
+    const ch = "nebula-ai-tab-tool-run";
+    if (aiTabToolRunListener) {
+      try {
+        ipcRenderer.removeListener(ch, aiTabToolRunListener);
+      } catch {
+        /* */
+      }
+      aiTabToolRunListener = null;
+    }
+    const fn = async (_e, msg) => {
+      const m = msg && typeof msg === "object" ? msg : {};
+      const requestId = typeof m.requestId === "string" ? m.requestId : "";
+      const reply = (obj) => {
+        if (!requestId) return;
+        try {
+          ipcRenderer.send("nebula-ai-tab-tool-done", { requestId, ...obj });
+        } catch {
+          /* */
+        }
+      };
+      if (typeof handler !== "function") {
+        reply({ ok: false, error: "Tab tool handler is not registered in the shell." });
+        return;
+      }
+      try {
+        const result = await handler(m);
+        if (result && typeof result === "object") reply(result);
+        else reply({ ok: false, error: "Invalid tab tool result." });
+      } catch (e) {
+        reply({ ok: false, error: String(e && e.message ? e.message : e) });
+      }
+    };
+    aiTabToolRunListener = fn;
+    ipcRenderer.on(ch, fn);
+    return () => {
+      if (aiTabToolRunListener === fn) {
+        try {
+          ipcRenderer.removeListener(ch, fn);
+        } catch {
+          /* */
+        }
+        aiTabToolRunListener = null;
+      }
+    };
+  },
+  aiChatStream: (payload, onChunk, onDone, onError) => {
+    const streamId = crypto.randomUUID();
+    const ch = (_e, d) => {
+      if (d && d.streamId === streamId && typeof d.text === "string" && d.text.length) onChunk(d.text);
+    };
+    const dn = (_e, d) => {
+      if (d && d.streamId === streamId) {
+        cleanup();
+        onDone();
+      }
+    };
+    const er = (_e, d) => {
+      if (d && d.streamId === streamId) {
+        cleanup();
+        onError(d && d.error ? String(d.error) : "Stream error");
+      }
+    };
+    const cleanup = () => {
+      ipcRenderer.removeListener("nebula-ai-chat-chunk", ch);
+      ipcRenderer.removeListener("nebula-ai-chat-done", dn);
+      ipcRenderer.removeListener("nebula-ai-chat-error", er);
+    };
+    ipcRenderer.on("nebula-ai-chat-chunk", ch);
+    ipcRenderer.on("nebula-ai-chat-done", dn);
+    ipcRenderer.on("nebula-ai-chat-error", er);
+    ipcRenderer
+      .invoke("nebula-ai-chat-stream", { ...(payload || {}), streamId })
+      .then((res) => {
+        if (!res || res.ok === false) {
+          cleanup();
+          onError(res && res.error ? String(res.error) : "Request failed");
+        }
+      })
+      .catch((e) => {
+        cleanup();
+        onError(String(e && e.message ? e.message : e));
+      });
+  },
   openExternalUrl: (url) => ipcRenderer.invoke("nebula-open-external-url", { url }),
   /** Native dialog: installer vs portable vs cancel; returns choice + URLs (renderer opens or runs installer). */
   promptUpdateInstallChoice: (payload) =>

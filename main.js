@@ -1096,7 +1096,32 @@ const DEFAULT_TOOLBAR_BUTTONS = {
   bookmark: true,
   sitePerm: true,
   translate: true,
+  ai: true,
   zoomReset: true,
+};
+
+/** Non-secret AI UI + model lists (keys live in vault). */
+const DEFAULT_AI_ASSISTANT = {
+  activeProvider: "openai",
+  modelByProvider: {
+    openai: "gpt-4o-mini",
+    anthropic: "claude-3-5-sonnet-20241022",
+    google: "gemini-2.0-flash",
+  },
+  customModelsByProvider: {
+    openai: [],
+    anthropic: [],
+    google: [],
+  },
+  openaiBaseUrl: "https://api.openai.com/v1",
+  /** When true and a Brave Search API key is in the vault, the assistant may call `web_search` during a reply. */
+  webSearchEnabled: false,
+  /** When true, the assistant may call `fetch_page_text` (Tier A: plain HTTP fetch in main; no cookies / no visible tabs). */
+  pageFetchEnabled: false,
+  /** When true, the assistant may call `open_browser_tab` / `read_browser_tab_text` (Tier C: real tabs, profile cookies). */
+  tabAgentEnabled: false,
+  /** If true (default), Tier C `open_browser_tab` asks for confirmation before navigating. */
+  tabAgentConfirmNavigation: true,
 };
 
 const DEFAULT_SETTINGS = {
@@ -1121,6 +1146,7 @@ const DEFAULT_SETTINGS = {
   toolbarButtons: { ...DEFAULT_TOOLBAR_BUTTONS },
   /** `header` | `strip` | `both` — new tab button placement. */
   newTabButtonPlacement: "both",
+  aiAssistant: JSON.parse(JSON.stringify(DEFAULT_AI_ASSISTANT)),
   searchSuggestions: {
     layerOrder: ["past", "local", "remote"],
     enablePastSearch: true,
@@ -1178,6 +1204,7 @@ function normalizeShellChromeSettings(o) {
     bookmark: typeof rawTb.bookmark === "boolean" ? rawTb.bookmark : tb0.bookmark,
     sitePerm: typeof rawTb.sitePerm === "boolean" ? rawTb.sitePerm : tb0.sitePerm,
     translate: typeof rawTb.translate === "boolean" ? rawTb.translate : tb0.translate,
+    ai: typeof rawTb.ai === "boolean" ? rawTb.ai : tb0.ai,
     zoomReset: typeof rawTb.zoomReset === "boolean" ? rawTb.zoomReset : tb0.zoomReset,
   };
   const ntp = new Set(["header", "strip", "both"]);
@@ -1192,6 +1219,7 @@ function normalizeSettings(s) {
   const ss = o.searchSuggestions;
   if (!ss || typeof ss !== "object") {
     o.searchSuggestions = clone(DEFAULT_SETTINGS.searchSuggestions);
+    o.aiAssistant = normalizeAiAssistantSettings(o.aiAssistant);
     normalizeShellChromeSettings(o);
     return o;
   }
@@ -1223,8 +1251,74 @@ function normalizeSettings(s) {
   let tlu = typeof o.translateLibreUrl === "string" ? o.translateLibreUrl.trim() : "";
   if (!tlu) tlu = DEFAULT_SETTINGS.translateLibreUrl;
   o.translateLibreUrl = tlu.slice(0, 512);
+  o.aiAssistant = normalizeAiAssistantSettings(o.aiAssistant);
   normalizeShellChromeSettings(o);
   return o;
+}
+
+function normalizeOpenAiChatBaseUrl(raw) {
+  const fallback = DEFAULT_AI_ASSISTANT.openaiBaseUrl;
+  const s = typeof raw === "string" && raw.trim() ? raw.trim() : fallback;
+  try {
+    const u = new URL(s.includes("://") ? s : `https://${s}`);
+    if (u.protocol !== "http:" && u.protocol !== "https:") return fallback;
+    let path = (u.pathname || "").replace(/\/$/, "");
+    if (!path.endsWith("/v1")) {
+      path = path ? `${path}/v1` : "/v1";
+    }
+    const out = `${u.origin}${path}`.slice(0, 512);
+    return out || fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function normalizeAiAssistantSettings(src) {
+  const provs = /** @type {const} */ (["openai", "anthropic", "google"]);
+  const raw = src && typeof src === "object" ? src : {};
+  let active = typeof raw.activeProvider === "string" ? raw.activeProvider.trim().toLowerCase() : "";
+  if (!provs.includes(/** @type {any} */ (active))) active = DEFAULT_AI_ASSISTANT.activeProvider;
+  const defM = DEFAULT_AI_ASSISTANT.modelByProvider;
+  const mergedM = raw.modelByProvider && typeof raw.modelByProvider === "object" ? raw.modelByProvider : {};
+  const modelByProvider = { ...defM };
+  for (const p of provs) {
+    const v = typeof mergedM[p] === "string" ? mergedM[p].trim().slice(0, 128) : "";
+    modelByProvider[p] = v || defM[p];
+  }
+  const rawCmp = raw.customModelsByProvider && typeof raw.customModelsByProvider === "object" ? raw.customModelsByProvider : {};
+  const customModelsByProvider = { openai: [], anthropic: [], google: [] };
+  const MAX_CUSTOM = 24;
+  const MAX_ID_LEN = 128;
+  for (const p of provs) {
+    const arr = Array.isArray(rawCmp[p]) ? rawCmp[p] : [];
+    const seen = new Set();
+    const out = [];
+    for (const x of arr) {
+      if (out.length >= MAX_CUSTOM) break;
+      const id = typeof x === "string" ? x.trim().slice(0, MAX_ID_LEN) : "";
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      out.push(id);
+    }
+    customModelsByProvider[p] = out;
+  }
+  const openaiBaseUrl = normalizeOpenAiChatBaseUrl(
+    typeof raw.openaiBaseUrl === "string" ? raw.openaiBaseUrl : DEFAULT_AI_ASSISTANT.openaiBaseUrl
+  );
+  const webSearchEnabled = raw.webSearchEnabled === true;
+  const pageFetchEnabled = raw.pageFetchEnabled === true;
+  const tabAgentEnabled = raw.tabAgentEnabled === true;
+  const tabAgentConfirmNavigation = raw.tabAgentConfirmNavigation === false ? false : true;
+  return {
+    activeProvider: active,
+    modelByProvider,
+    customModelsByProvider,
+    openaiBaseUrl,
+    webSearchEnabled,
+    pageFetchEnabled,
+    tabAgentEnabled,
+    tabAgentConfirmNavigation,
+  };
 }
 
 function loadSettings() {
@@ -1515,6 +1609,1552 @@ ipcMain.handle("nebula-translation-translate-texts", async (_e, payload) => {
   } catch (err) {
     return { ok: false, error: String(err && err.message ? err.message : err) };
   }
+});
+
+const NEBULA_AI_VAULT_PREFIX = "https://nebula.settings/ai/";
+
+function isNebulaAiVaultEntry(e) {
+  if (!e || typeof e !== "object") return false;
+  const u = typeof e.url === "string" ? e.url : "";
+  return u.startsWith(NEBULA_AI_VAULT_PREFIX);
+}
+
+function nebulaAiVaultUrl(provider) {
+  const p = provider === "anthropic" ? "anthropic" : provider === "google" ? "google" : "openai";
+  return `${NEBULA_AI_VAULT_PREFIX}${p}`;
+}
+
+function nebulaAiBraveSearchVaultUrl() {
+  return `${NEBULA_AI_VAULT_PREFIX}brave-search`;
+}
+
+function getAiVaultEntryRow(provider) {
+  const want = nebulaAiVaultUrl(provider);
+  const entries = loadVaultEntries();
+  return entries.find((e) => typeof e.url === "string" && e.url === want) || null;
+}
+
+function getBraveSearchVaultEntryRow() {
+  const want = nebulaAiBraveSearchVaultUrl();
+  const entries = loadVaultEntries();
+  return entries.find((e) => e && typeof e.url === "string" && e.url === want) || null;
+}
+
+function getBraveSearchApiKeyForSearch() {
+  if (hasNebulaLocalAccount() && !isNebulaVaultSecretsUnlocked()) {
+    return { locked: true, apiKey: "" };
+  }
+  const row = getBraveSearchVaultEntryRow();
+  if (!row) return { locked: false, apiKey: "" };
+  const apiKey = typeof row.password === "string" ? row.password : "";
+  return { locked: false, apiKey };
+}
+
+function getAiSecretsForApi(provider) {
+  const p = provider === "anthropic" ? "anthropic" : provider === "google" ? "google" : "openai";
+  if (hasNebulaLocalAccount() && !isNebulaVaultSecretsUnlocked()) {
+    return { locked: true, apiKey: "" };
+  }
+  const row = getAiVaultEntryRow(p);
+  if (!row) return { locked: false, apiKey: "" };
+  const apiKey = typeof row.password === "string" ? row.password : "";
+  return { locked: false, apiKey };
+}
+
+const AI_CHAT_MAX_MESSAGES = 32;
+const AI_CHAT_MAX_MSG_CHARS = 16000;
+
+function normalizeAiChatPayloadMessages(payload) {
+  const raw = payload && Array.isArray(payload.messages) ? payload.messages : [];
+  if (raw.length === 0 || raw.length > AI_CHAT_MAX_MESSAGES) return null;
+  const out = [];
+  for (const m of raw) {
+    if (!m || typeof m !== "object") return null;
+    const roleRaw = typeof m.role === "string" ? m.role.trim().toLowerCase() : "user";
+    const role = roleRaw === "assistant" ? "assistant" : roleRaw === "system" ? "system" : "user";
+    const content = typeof m.content === "string" ? m.content : "";
+    if (content.length > AI_CHAT_MAX_MSG_CHARS) return null;
+    out.push({ role, content });
+  }
+  if (!out.length) return null;
+  if (out[out.length - 1].role !== "user") return null;
+  if (!String(out[out.length - 1].content || "").trim()) return null;
+  return out;
+}
+
+function truncateAiErrorText(s, max) {
+  const t = String(s || "");
+  return t.length > max ? t.slice(0, max) + "…" : t;
+}
+
+const AI_WEB_SEARCH_MAX_ROUNDS = 4;
+const AI_WEB_SEARCH_MAX_CALLS = 3;
+const AI_WEB_SEARCH_SNIPPET_MAX = 900;
+const AI_WEB_SEARCH_BODY_MAX = 8000;
+const BRAVE_WEB_SEARCH_ENDPOINT = "https://api.search.brave.com/res/v1/web/search";
+
+const WEB_SEARCH_TOOL_DESCRIPTION =
+  "Search the public web for current events, facts, or topics you are unsure about. Use a concise search query string.";
+
+const OPENAI_WEB_SEARCH_TOOLS = [
+  {
+    type: "function",
+    function: {
+      name: "web_search",
+      description: WEB_SEARCH_TOOL_DESCRIPTION,
+      parameters: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "Search keywords or question to look up online." },
+        },
+        required: ["query"],
+      },
+    },
+  },
+];
+
+const ANTHROPIC_WEB_SEARCH_TOOLS = [
+  {
+    name: "web_search",
+    description: WEB_SEARCH_TOOL_DESCRIPTION,
+    input_schema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Search keywords or question to look up online." },
+      },
+      required: ["query"],
+    },
+  },
+];
+
+const GEMINI_WEB_SEARCH_TOOL_DECL = {
+  name: "web_search",
+  description: WEB_SEARCH_TOOL_DESCRIPTION,
+  parameters: {
+    type: "object",
+    properties: {
+      query: { type: "string" },
+    },
+    required: ["query"],
+  },
+};
+
+const FETCH_PAGE_TEXT_TOOL_DESCRIPTION =
+  "Fetch readable text from a public web page (http or https only). Does not use the user's browser cookies or logged-in session. Use when the user provides a specific URL to read or summarize.";
+
+const OPENAI_FETCH_PAGE_TEXT_TOOL = {
+  type: "function",
+  function: {
+    name: "fetch_page_text",
+    description: FETCH_PAGE_TEXT_TOOL_DESCRIPTION,
+    parameters: {
+      type: "object",
+      properties: {
+        url: { type: "string", description: "Absolute http(s) URL of the page to fetch." },
+      },
+      required: ["url"],
+    },
+  },
+};
+
+const ANTHROPIC_FETCH_PAGE_TEXT_TOOL = {
+  name: "fetch_page_text",
+  description: FETCH_PAGE_TEXT_TOOL_DESCRIPTION,
+  input_schema: {
+    type: "object",
+    properties: {
+      url: { type: "string", description: "Absolute http(s) URL of the page to fetch." },
+    },
+    required: ["url"],
+  },
+};
+
+const GEMINI_FETCH_PAGE_TEXT_TOOL_DECL = {
+  name: "fetch_page_text",
+  description: FETCH_PAGE_TEXT_TOOL_DESCRIPTION,
+  parameters: {
+    type: "object",
+    properties: {
+      url: { type: "string" },
+    },
+    required: ["url"],
+  },
+};
+
+const AI_PAGE_FETCH_MAX_BYTES = 1_500_000;
+const AI_PAGE_FETCH_MAX_REDIRECTS = 5;
+const AI_PAGE_FETCH_TIMEOUT_MS = 22_000;
+const AI_PAGE_FETCH_MAX_OUTPUT_CHARS = 12_000;
+const AI_PAGE_FETCH_MAX_CALLS = 3;
+
+const AI_TAB_AGENT_OPEN_MAX = 2;
+const AI_TAB_AGENT_READ_MAX = 4;
+const AI_TAB_AGENT_TOOL_TIMEOUT_MS = 50_000;
+const AI_TAB_AGENT_TEXT_MAX = 12_000;
+
+const TAB_AGENT_OPEN_TOOL_DESCRIPTION =
+  "Open a URL in a real Nebula browser tab (uses the profile cookie jar and runs page JavaScript). Prefer fetch_page_text for anonymous public pages. Ask sparingly; the user may need to confirm.";
+
+const TAB_AGENT_READ_TOOL_DESCRIPTION =
+  "Read visible text from a Nebula tab. Pass tab_id from a prior open_browser_tab result, or omit to read the active tab. Only works for ordinary http(s) pages.";
+
+const OPENAI_TAB_AGENT_OPEN_TOOL = {
+  type: "function",
+  function: {
+    name: "open_browser_tab",
+    description: TAB_AGENT_OPEN_TOOL_DESCRIPTION,
+    parameters: {
+      type: "object",
+      properties: {
+        url: { type: "string", description: "Absolute http(s) URL to open." },
+        activate: {
+          type: "boolean",
+          description: "If true, switch to the new tab. Default false (background tab).",
+        },
+      },
+      required: ["url"],
+    },
+  },
+};
+
+const OPENAI_TAB_AGENT_READ_TOOL = {
+  type: "function",
+  function: {
+    name: "read_browser_tab_text",
+    description: TAB_AGENT_READ_TOOL_DESCRIPTION,
+    parameters: {
+      type: "object",
+      properties: {
+        tab_id: { type: "string", description: "Tab id from open_browser_tab (e.g. t12). Omit for active tab." },
+      },
+      required: [],
+    },
+  },
+};
+
+const ANTHROPIC_TAB_AGENT_OPEN_TOOL = {
+  name: "open_browser_tab",
+  description: TAB_AGENT_OPEN_TOOL_DESCRIPTION,
+  input_schema: {
+    type: "object",
+    properties: {
+      url: { type: "string", description: "Absolute http(s) URL to open." },
+      activate: { type: "boolean", description: "Switch to the new tab (default false)." },
+    },
+    required: ["url"],
+  },
+};
+
+const ANTHROPIC_TAB_AGENT_READ_TOOL = {
+  name: "read_browser_tab_text",
+  description: TAB_AGENT_READ_TOOL_DESCRIPTION,
+  input_schema: {
+    type: "object",
+    properties: {
+      tab_id: { type: "string", description: "Tab id from open_browser_tab; omit for active tab." },
+    },
+    required: [],
+  },
+};
+
+const GEMINI_TAB_AGENT_OPEN_DECL = {
+  name: "open_browser_tab",
+  description: TAB_AGENT_OPEN_TOOL_DESCRIPTION,
+  parameters: {
+    type: "object",
+    properties: {
+      url: { type: "string" },
+      activate: { type: "boolean" },
+    },
+    required: ["url"],
+  },
+};
+
+const GEMINI_TAB_AGENT_READ_DECL = {
+  name: "read_browser_tab_text",
+  description: TAB_AGENT_READ_TOOL_DESCRIPTION,
+  parameters: {
+    type: "object",
+    properties: {
+      tab_id: { type: "string" },
+    },
+    required: [],
+  },
+};
+
+const pendingAiTabTool = new Map();
+
+ipcMain.on("nebula-ai-tab-tool-done", (event, msg) => {
+  if (!msg || typeof msg !== "object") return;
+  const id = typeof msg.requestId === "string" ? msg.requestId : "";
+  if (!id) return;
+  const p = pendingAiTabTool.get(id);
+  if (!p || event.sender.id !== p.shellWcId) return;
+  pendingAiTabTool.delete(id);
+  try {
+    clearTimeout(p.timer);
+  } catch {
+    /* */
+  }
+  try {
+    p.finish(msg);
+  } catch {
+    /* */
+  }
+});
+
+function formatTabAgentToolResultForLlm(msg) {
+  if (!msg || !msg.ok) return `(Tab tool error: ${msg && msg.error ? String(msg.error) : "unknown"})`;
+  const meta = [msg.tabId ? `tab_id=${msg.tabId}` : "", msg.title ? `title=${msg.title}` : "", msg.url ? `url=${msg.url}` : ""]
+    .filter(Boolean)
+    .join("\n");
+  const body = typeof msg.text === "string" && msg.text.trim() ? msg.text : "(No text extracted.)";
+  return meta ? `${meta}\n\n${body}` : body;
+}
+
+async function invokeShellTabTool(shellWc, payload, timeoutMs = AI_TAB_AGENT_TOOL_TIMEOUT_MS) {
+  if (!shellWc || shellWc.isDestroyed()) {
+    return { ok: false, error: "Shell window is not available." };
+  }
+  const requestId = crypto.randomUUID();
+  return await new Promise((resolve) => {
+    let settled = false;
+    const finish = (obj) => {
+      if (settled) return;
+      settled = true;
+      try {
+        clearTimeout(timer);
+      } catch {
+        /* */
+      }
+      pendingAiTabTool.delete(requestId);
+      resolve(obj);
+    };
+    const timer = setTimeout(() => finish({ ok: false, error: "Tab tool timed out." }), timeoutMs);
+    pendingAiTabTool.set(requestId, { shellWcId: shellWc.id, finish, timer });
+    try {
+      shellWc.send("nebula-ai-tab-tool-run", { ...payload, requestId });
+    } catch (e) {
+      finish({ ok: false, error: String(e && e.message ? e.message : e) });
+    }
+  });
+}
+
+function mapOpenAiMessagesForApi(messages) {
+  return messages.map((m) => {
+    if (m.role === "tool" && typeof m.tool_call_id === "string") {
+      return {
+        role: "tool",
+        tool_call_id: m.tool_call_id,
+        content: typeof m.content === "string" ? m.content : String(m.content ?? ""),
+      };
+    }
+    if (m.role === "assistant" && Array.isArray(m.tool_calls)) {
+      return {
+        role: "assistant",
+        content: m.content === undefined || m.content === null ? null : String(m.content),
+        tool_calls: m.tool_calls,
+      };
+    }
+    return { role: m.role, content: typeof m.content === "string" ? m.content : String(m.content ?? "") };
+  });
+}
+
+function openAiToolsUnsupportedFromHttpError(status, bodyText) {
+  if (status !== 400 && status !== 404) return false;
+  const s = String(bodyText || "").toLowerCase();
+  if (!s.includes("tool")) return false;
+  return (
+    s.includes("unknown") ||
+    s.includes("unexpected") ||
+    s.includes("not support") ||
+    s.includes("invalid") ||
+    s.includes("does not exist")
+  );
+}
+
+function isPrivateOrLocalHostname(hostname) {
+  const h = String(hostname || "")
+    .toLowerCase()
+    .trim();
+  if (!h) return true;
+  if (h === "localhost" || h.endsWith(".localhost")) return true;
+  if (h === "0.0.0.0" || h === "::" || h === "[::]" || h === "[::1]" || h === "::1") return true;
+  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(h);
+  if (m) {
+    const a = Number(m[1]);
+    const b = Number(m[2]);
+    const c = Number(m[3]);
+    const d = Number(m[4]);
+    if ([a, b, c, d].some((x) => x > 255)) return true;
+    if (a === 0 || a === 127) return true;
+    if (a === 10) return true;
+    if (a === 192 && b === 168) return true;
+    if (a === 169 && b === 254) return true;
+    if (a === 172 && b >= 16 && b <= 31) return true;
+    if (a === 100 && b >= 64 && b <= 127) return true;
+    if (a === 198 && (b === 18 || b === 19)) return true;
+    if (a === 198 && b >= 51 && b <= 55) return true;
+    if (a >= 224 && a <= 239) return true;
+  }
+  if (h.includes(":")) {
+    const hc = h.replace(/^\[|\]$/g, "");
+    if (hc === "::1") return true;
+    const low = hc.toLowerCase();
+    if (low.startsWith("fe80:") || low.startsWith("fc") || low.startsWith("fd")) return true;
+  }
+  return false;
+}
+
+function validateAssistantPageFetchUrl(raw) {
+  const s = String(raw || "").trim().slice(0, 2048);
+  if (!s) return { ok: false, error: "(Empty URL.)" };
+  let u;
+  try {
+    u = new URL(s);
+  } catch {
+    return { ok: false, error: "(Invalid URL.)" };
+  }
+  if (u.username || u.password) return { ok: false, error: "(URLs with credentials are not allowed.)" };
+  const proto = u.protocol.toLowerCase();
+  if (proto !== "http:" && proto !== "https:") return { ok: false, error: "(Only http and https URLs are allowed.)" };
+  if (isPrivateOrLocalHostname(u.hostname)) return { ok: false, error: "(That host or IP is not allowed.)" };
+  return { ok: true, url: u.href };
+}
+
+function charsetFromContentType(ct) {
+  const m = /charset\s*=\s*([^;]+)/i.exec(String(ct || ""));
+  if (m) return m[1].trim().replace(/^["']|["']$/g, "").slice(0, 64) || "utf-8";
+  return "utf-8";
+}
+
+async function readResponseBodyWithCap(response, maxBytes) {
+  const reader = response.body && response.body.getReader ? response.body.getReader() : null;
+  if (!reader) {
+    const ab = await response.arrayBuffer().catch(() => null);
+    if (!ab) return new Uint8Array(0);
+    const u = new Uint8Array(ab);
+    return u.byteLength > maxBytes ? u.slice(0, maxBytes) : u;
+  }
+  const chunks = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (!value || !value.length) continue;
+    const room = maxBytes - total;
+    if (room <= 0) {
+      try {
+        await reader.cancel();
+      } catch {
+        /* */
+      }
+      break;
+    }
+    if (value.length <= room) {
+      chunks.push(value);
+      total += value.length;
+    } else {
+      chunks.push(value.slice(0, room));
+      total = maxBytes;
+      try {
+        await reader.cancel();
+      } catch {
+        /* */
+      }
+      break;
+    }
+  }
+  const out = new Uint8Array(total);
+  let off = 0;
+  for (const c of chunks) {
+    out.set(c, off);
+    off += c.length;
+  }
+  return out;
+}
+
+function htmlToPlainTextForAi(html, maxChars) {
+  let s = String(html);
+  s = s.replace(/<script\b[\s\S]*?<\/script>/gi, " ");
+  s = s.replace(/<style\b[\s\S]*?<\/style>/gi, " ");
+  s = s.replace(/<noscript\b[\s\S]*?<\/noscript>/gi, " ");
+  s = s.replace(/<!--[\s\S]*?-->/g, " ");
+  s = s.replace(/<[^>]+>/g, " ");
+  s = s.replace(/&nbsp;/gi, " ");
+  s = s.replace(/&amp;/gi, "&");
+  s = s.replace(/&lt;/gi, "<");
+  s = s.replace(/&gt;/gi, ">");
+  s = s.replace(/&quot;/gi, '"');
+  s = s.replace(/&#(\d+);/g, (_, n) => {
+    const c = Number(n);
+    return c > 0 && c < 0x110000 ? String.fromCharCode(c) : "";
+  });
+  s = s.replace(/&#x([0-9a-f]+);/gi, (_, h) => {
+    const c = parseInt(h, 16);
+    return !Number.isNaN(c) && c > 0 && c < 0x110000 ? String.fromCharCode(c) : "";
+  });
+  s = s.replace(/[ \t\f\v]+/g, " ");
+  s = s.replace(/\s*\n\s*/g, "\n");
+  s = s.replace(/\n{3,}/g, "\n\n");
+  s = s.trim();
+  if (s.length > maxChars) s = s.slice(0, maxChars) + "\n…(truncated)";
+  return s;
+}
+
+async function performFetchPageText(urlRaw) {
+  const v0 = validateAssistantPageFetchUrl(urlRaw);
+  if (!v0.ok) return v0.error;
+  let current = v0.url;
+  const headers = {
+    Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,text/plain;q=0.8,*/*;q=0.5",
+    "User-Agent": "Nebula/1.0 (AI assistant page fetch)",
+  };
+  for (let redirect = 0; redirect <= AI_PAGE_FETCH_MAX_REDIRECTS; redirect++) {
+    const ac = new AbortController();
+    const to = setTimeout(() => ac.abort(), AI_PAGE_FETCH_TIMEOUT_MS);
+    let r;
+    try {
+      r = await fetch(current, { method: "GET", redirect: "manual", headers, signal: ac.signal });
+    } catch (e) {
+      clearTimeout(to);
+      return `(Fetch failed: ${truncateAiErrorText(String(e && e.message ? e.message : e), 200)})`;
+    }
+    clearTimeout(to);
+    if (r.status >= 300 && r.status < 400) {
+      const loc = r.headers.get("location");
+      if (!loc || redirect === AI_PAGE_FETCH_MAX_REDIRECTS) {
+        return `(Too many redirects or missing Location. Last URL: ${truncateAiErrorText(current, 120)})`;
+      }
+      let nextHref;
+      try {
+        nextHref = new URL(loc, current).href;
+      } catch {
+        return "(Invalid redirect URL.)";
+      }
+      const vn = validateAssistantPageFetchUrl(nextHref);
+      if (!vn.ok) return `(Redirect blocked ${vn.error})`;
+      current = vn.url;
+      continue;
+    }
+    if (!r.ok) return `(HTTP ${r.status} for ${truncateAiErrorText(current, 200)})`;
+    const ct = r.headers.get("content-type") || "";
+    const bytes = await readResponseBodyWithCap(r, AI_PAGE_FETCH_MAX_BYTES);
+    const enc = charsetFromContentType(ct);
+    let text;
+    try {
+      text = new TextDecoder(enc, { fatal: false }).decode(bytes);
+    } catch {
+      text = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+    }
+    const plain = htmlToPlainTextForAi(text, AI_PAGE_FETCH_MAX_OUTPUT_CHARS);
+    if (!plain.trim()) return "(No extractable text from the response; the page may be empty or non-HTML.)";
+    return `Fetched: ${current}\nContent-Type: ${ct || "(unknown)"}\n\n${plain}`;
+  }
+  return "(Redirect loop.)";
+}
+
+async function performBraveWebSearch(apiKey, queryRaw) {
+  const key = String(apiKey || "").trim();
+  if (!key) return "(Web search is not configured.)";
+  const q = String(queryRaw || "").trim().slice(0, 500);
+  if (!q) return "(Empty search query.)";
+  const u = new URL(BRAVE_WEB_SEARCH_ENDPOINT);
+  u.searchParams.set("q", q);
+  u.searchParams.set("count", "8");
+  let r;
+  try {
+    r = await fetch(u, {
+      method: "GET",
+      headers: {
+        "X-Subscription-Token": key,
+        Accept: "application/json",
+      },
+      signal: AbortSignal.timeout(25000),
+    });
+  } catch (e) {
+    return `(Search request failed: ${truncateAiErrorText(String(e && e.message ? e.message : e), 200)})`;
+  }
+  const rawText = await r.text().catch(() => "");
+  if (!r.ok) {
+    return `(Search failed ${r.status}: ${truncateAiErrorText(rawText, 240)})`;
+  }
+  let data;
+  try {
+    data = JSON.parse(rawText);
+  } catch {
+    const peek = String(rawText || "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 200);
+    return `(Search response was not valid JSON — usually a wrong endpoint or a non-JSON error page. Snippet: ${truncateAiErrorText(peek, 200)})`;
+  }
+  const results = (data && data.web && Array.isArray(data.web.results) ? data.web.results : []).slice(0, 8);
+  if (!results.length) {
+    return "(No web results for this query.)";
+  }
+  const lines = [];
+  let total = 0;
+  for (let i = 0; i < results.length; i++) {
+    const it = results[i] || {};
+    const title = typeof it.title === "string" ? it.title.trim() : "";
+    const url = typeof it.url === "string" ? it.url.trim() : "";
+    let desc = typeof it.description === "string" ? it.description.trim() : "";
+    if (desc.length > AI_WEB_SEARCH_SNIPPET_MAX) desc = desc.slice(0, AI_WEB_SEARCH_SNIPPET_MAX) + "…";
+    const block = [`[${i + 1}] ${title || "(no title)"}`, url ? `URL: ${url}` : "", desc ? desc : ""].filter(Boolean).join("\n");
+    if (total + block.length + 2 > AI_WEB_SEARCH_BODY_MAX) break;
+    lines.push(block);
+    total += block.length + 2;
+  }
+  return lines.join("\n\n") || "(No web results for this query.)";
+}
+
+/** Read SSE from fetch response; invokes handler(eventName, dataLine) per `data:` line (OpenAI / Gemini often omit `event:`). */
+async function readSseFromResponse(response, handleData) {
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error("No response body");
+  const dec = new TextDecoder();
+  let buffer = "";
+  let carryEvent = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += dec.decode(value, { stream: true });
+    for (;;) {
+      const nl = buffer.indexOf("\n");
+      if (nl < 0) break;
+      let line = buffer.slice(0, nl);
+      buffer = buffer.slice(nl + 1);
+      if (line.endsWith("\r")) line = line.slice(0, -1);
+      if (line === "") {
+        carryEvent = "";
+        continue;
+      }
+      if (line.startsWith(":")) continue;
+      if (line.startsWith("event:")) {
+        carryEvent = line.slice(6).trim();
+        continue;
+      }
+      if (line.startsWith("data:")) {
+        const data = line.slice(5).trim();
+        await handleData(carryEvent, data);
+      }
+    }
+  }
+  buffer += dec.decode();
+  if (buffer.trim()) {
+    for (let line of buffer.split("\n")) {
+      if (line.endsWith("\r")) line = line.slice(0, -1);
+      if (line === "" || line.startsWith(":")) continue;
+      if (line.startsWith("event:")) {
+        carryEvent = line.slice(6).trim();
+        continue;
+      }
+      if (line.startsWith("data:")) {
+        const data = line.slice(5).trim();
+        await handleData(carryEvent, data);
+      }
+    }
+  }
+}
+
+async function openAiChatCompletionJson(baseUrl, apiKey, model, messages, extra) {
+  const key = String(apiKey || "").trim();
+  if (!key) throw new Error("OpenAI: missing API key");
+  const base = normalizeOpenAiChatBaseUrl(baseUrl);
+  const url = `${base.replace(/\/$/, "")}/chat/completions`;
+  const body = {
+    model,
+    messages: mapOpenAiMessagesForApi(messages),
+    stream: false,
+    ...(extra && typeof extra === "object" ? extra : {}),
+  };
+  const r = await fetch(url, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${key}`,
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+  const errBody = await r.text().catch(() => "");
+  if (!r.ok) {
+    const err = new Error(truncateAiErrorText(`OpenAI ${r.status}: ${errBody}`, 400));
+    err.httpStatus = r.status;
+    err.responseBody = errBody;
+    throw err;
+  }
+  try {
+    return JSON.parse(errBody);
+  } catch {
+    throw new Error("OpenAI: invalid JSON response");
+  }
+}
+
+async function aiChatOpenAIWithOptionalWebSearch(baseUrl, apiKey, model, flatMessages, sender, streamId, options) {
+  const key = String(apiKey || "").trim();
+  if (!key) throw new Error("OpenAI: missing API key");
+  const usePageFetch = options && options.pageFetchEnabled === true;
+  const bk = String(options && options.braveKey ? options.braveKey : "").trim();
+  const useWebSearch = !!(options && options.useWebSearch) && !!bk;
+  const shellWc = options && options.shellWc;
+  const useTabAgent = !!(options && options.tabAgentEnabled) && shellWc && typeof shellWc.isDestroyed === "function" && !shellWc.isDestroyed();
+  const tabAgentConfirmNavigation = options && options.tabAgentConfirmNavigation !== false;
+  if (!useWebSearch && !usePageFetch && !useTabAgent) {
+    await aiChatOpenAIStream(baseUrl, key, model, flatMessages, sender, streamId);
+    return;
+  }
+  const tools = [];
+  if (useWebSearch) tools.push(...OPENAI_WEB_SEARCH_TOOLS);
+  if (usePageFetch) tools.push(OPENAI_FETCH_PAGE_TEXT_TOOL);
+  if (useTabAgent) {
+    tools.push(OPENAI_TAB_AGENT_OPEN_TOOL, OPENAI_TAB_AGENT_READ_TOOL);
+  }
+  if (!tools.length) {
+    await aiChatOpenAIStream(baseUrl, key, model, flatMessages, sender, streamId);
+    return;
+  }
+  let work = flatMessages.map((m) => ({ role: m.role, content: m.content }));
+  let searchCalls = 0;
+  let pageFetchCalls = 0;
+  let tabOpenCalls = 0;
+  let tabReadCalls = 0;
+  for (let round = 0; round < AI_WEB_SEARCH_MAX_ROUNDS; round++) {
+    let data;
+    try {
+      data = await openAiChatCompletionJson(baseUrl, key, model, work, {
+        tools,
+        tool_choice: "auto",
+      });
+    } catch (e) {
+      if (openAiToolsUnsupportedFromHttpError(e.httpStatus, e.responseBody)) {
+        await aiChatOpenAIStream(baseUrl, key, model, flatMessages, sender, streamId);
+        return;
+      }
+      throw e;
+    }
+    const ch = data.choices && data.choices[0];
+    if (!ch || !ch.message) throw new Error("OpenAI: empty completion");
+    const msg = ch.message;
+    if (ch.finish_reason === "tool_calls" && Array.isArray(msg.tool_calls) && msg.tool_calls.length) {
+      work.push({
+        role: "assistant",
+        content: msg.content === undefined || msg.content === null ? null : String(msg.content),
+        tool_calls: msg.tool_calls,
+      });
+      for (const tc of msg.tool_calls) {
+        const tid = typeof tc.id === "string" ? tc.id : "";
+        const fn = tc.function && typeof tc.function.name === "string" ? tc.function.name : "";
+        let out = "";
+        if (fn === "web_search") {
+          if (!useWebSearch) {
+            out = "Web search is not enabled for this request.";
+          } else if (searchCalls >= AI_WEB_SEARCH_MAX_CALLS) {
+            out = "Web search limit reached for this message.";
+          } else {
+            searchCalls++;
+            let q = "";
+            try {
+              const rawArgs = tc.function && tc.function.arguments != null ? String(tc.function.arguments) : "{}";
+              const args = JSON.parse(rawArgs);
+              q = typeof args.query === "string" ? args.query : "";
+            } catch {
+              q = "";
+            }
+            out = await performBraveWebSearch(bk, q);
+          }
+        } else if (fn === "fetch_page_text") {
+          if (!usePageFetch) {
+            out = "Page fetch is not enabled for this request.";
+          } else if (pageFetchCalls >= AI_PAGE_FETCH_MAX_CALLS) {
+            out = "Page fetch limit reached for this message.";
+          } else {
+            pageFetchCalls++;
+            let pageUrl = "";
+            try {
+              const rawArgs = tc.function && tc.function.arguments != null ? String(tc.function.arguments) : "{}";
+              const args = JSON.parse(rawArgs);
+              pageUrl = typeof args.url === "string" ? args.url : "";
+            } catch {
+              pageUrl = "";
+            }
+            out = await performFetchPageText(pageUrl);
+          }
+        } else if (fn === "open_browser_tab") {
+          if (!useTabAgent) {
+            out = "Tab agent is not enabled for this request.";
+          } else if (tabOpenCalls >= AI_TAB_AGENT_OPEN_MAX) {
+            out = "open_browser_tab limit reached for this message.";
+          } else {
+            tabOpenCalls++;
+            let pageUrl = "";
+            let activate = false;
+            try {
+              const rawArgs = tc.function && tc.function.arguments != null ? String(tc.function.arguments) : "{}";
+              const args = JSON.parse(rawArgs);
+              pageUrl = typeof args.url === "string" ? args.url : "";
+              activate = args.activate === true;
+            } catch {
+              pageUrl = "";
+            }
+            const raw = await invokeShellTabTool(shellWc, {
+              op: "open_browser_tab",
+              url: pageUrl,
+              activate,
+              confirmNavigation: tabAgentConfirmNavigation,
+            });
+            out = formatTabAgentToolResultForLlm(raw);
+          }
+        } else if (fn === "read_browser_tab_text") {
+          if (!useTabAgent) {
+            out = "Tab agent is not enabled for this request.";
+          } else if (tabReadCalls >= AI_TAB_AGENT_READ_MAX) {
+            out = "read_browser_tab_text limit reached for this message.";
+          } else {
+            tabReadCalls++;
+            let tabIdArg = "";
+            try {
+              const rawArgs = tc.function && tc.function.arguments != null ? String(tc.function.arguments) : "{}";
+              const args = JSON.parse(rawArgs);
+              tabIdArg = typeof args.tab_id === "string" ? args.tab_id : "";
+            } catch {
+              tabIdArg = "";
+            }
+            const raw = await invokeShellTabTool(shellWc, {
+              op: "read_browser_tab_text",
+              tab_id: tabIdArg,
+            });
+            out = formatTabAgentToolResultForLlm(raw);
+          }
+        } else {
+          out = "Unsupported tool.";
+        }
+        work.push({ role: "tool", tool_call_id: tid, content: out });
+      }
+      continue;
+    }
+    const text = typeof msg.content === "string" ? msg.content : "";
+    if (text.trim()) {
+      try {
+        sender.send("nebula-ai-chat-chunk", { streamId, text });
+      } catch {
+        /* */
+      }
+      return;
+    }
+    break;
+  }
+  await aiChatOpenAIStream(baseUrl, key, model, work, sender, streamId);
+}
+
+async function aiChatOpenAIStream(baseUrl, apiKey, model, messages, sender, streamId) {
+  const key = String(apiKey || "").trim();
+  if (!key) throw new Error("OpenAI: missing API key");
+  const base = normalizeOpenAiChatBaseUrl(baseUrl);
+  const url = `${base.replace(/\/$/, "")}/chat/completions`;
+  const r = await fetch(url, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${key}`,
+      "Content-Type": "application/json",
+      Accept: "text/event-stream",
+    },
+    body: JSON.stringify({
+      model,
+      messages: mapOpenAiMessagesForApi(messages),
+      stream: true,
+    }),
+  });
+  if (!r.ok) {
+    const errBody = await r.text().catch(() => "");
+    throw new Error(truncateAiErrorText(`OpenAI ${r.status}: ${errBody}`, 400));
+  }
+  await readSseFromResponse(r, async (_ev, data) => {
+    if (data === "[DONE]") return;
+    try {
+      const j = JSON.parse(data);
+      const choice = j.choices && j.choices[0];
+      const d = choice && choice.delta;
+      if (!d) return;
+      if (typeof d.content === "string" && d.content.length > 0) {
+        sender.send("nebula-ai-chat-chunk", { streamId, text: d.content });
+      }
+    } catch {
+      /* ignore malformed chunk */
+    }
+  });
+}
+
+function buildAnthropicFlatFromUiMessages(messages) {
+  let system = "";
+  const anthMsgs = [];
+  for (const m of messages) {
+    if (m.role === "system") {
+      system += (system ? "\n\n" : "") + m.content;
+    } else if (m.role === "user" || m.role === "assistant") {
+      anthMsgs.push({ role: m.role, content: m.content });
+    }
+  }
+  return { system, anthMsgs };
+}
+
+function anthropicConcatTextBlocks(content) {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  let t = "";
+  for (const b of content) {
+    if (b && b.type === "text" && typeof b.text === "string") t += b.text;
+  }
+  return t;
+}
+
+async function aiChatAnthropicStreamPrepared(apiKey, model, system, anthMsgs, sender, streamId) {
+  const key = String(apiKey || "").trim();
+  if (!key) throw new Error("Anthropic: missing API key");
+  const msgs = Array.isArray(anthMsgs) ? [...anthMsgs] : [];
+  if (!msgs.length) throw new Error("Anthropic: no messages");
+  if (msgs[0].role !== "user") {
+    msgs.unshift({ role: "user", content: "." });
+  }
+  const r = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "x-api-key": key,
+      "anthropic-version": "2023-06-01",
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
+    body: JSON.stringify({
+      model,
+      max_tokens: 4096,
+      system: system || undefined,
+      messages: msgs,
+      stream: true,
+    }),
+  });
+  if (!r.ok) {
+    const errBody = await r.text().catch(() => "");
+    throw new Error(truncateAiErrorText(`Anthropic ${r.status}: ${errBody}`, 400));
+  }
+  await readSseFromResponse(r, async (_ev, data) => {
+    let j;
+    try {
+      j = JSON.parse(data);
+    } catch {
+      return;
+    }
+    if (j.type === "error" && j.error) {
+      throw new Error(typeof j.error.message === "string" ? j.error.message : "Anthropic error");
+    }
+    if (j.type === "content_block_delta" && j.delta && j.delta.type === "text_delta" && typeof j.delta.text === "string" && j.delta.text.length > 0) {
+      sender.send("nebula-ai-chat-chunk", { streamId, text: j.delta.text });
+    }
+  });
+}
+
+async function aiChatAnthropicMessagesOnce(apiKey, model, system, anthMsgs, extra) {
+  const key = String(apiKey || "").trim();
+  if (!key) throw new Error("Anthropic: missing API key");
+  const msgs = Array.isArray(anthMsgs) ? [...anthMsgs] : [];
+  if (!msgs.length) throw new Error("Anthropic: no messages");
+  if (msgs[0].role !== "user") {
+    msgs.unshift({ role: "user", content: "." });
+  }
+  const body = {
+    model,
+    max_tokens: 4096,
+    system: system || undefined,
+    messages: msgs,
+    stream: false,
+    ...(extra && typeof extra === "object" ? extra : {}),
+  };
+  const r = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "x-api-key": key,
+      "anthropic-version": "2023-06-01",
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+  const errBody = await r.text().catch(() => "");
+  if (!r.ok) {
+    const err = new Error(truncateAiErrorText(`Anthropic ${r.status}: ${errBody}`, 400));
+    err.httpStatus = r.status;
+    err.responseBody = errBody;
+    throw err;
+  }
+  try {
+    return JSON.parse(errBody);
+  } catch {
+    throw new Error("Anthropic: invalid JSON response");
+  }
+}
+
+function anthropicToolsUnsupportedFromError(status, bodyText) {
+  if (status !== 400 && status !== 404) return false;
+  const s = String(bodyText || "").toLowerCase();
+  return s.includes("tool") && (s.includes("unknown") || s.includes("not") || s.includes("invalid"));
+}
+
+async function aiChatAnthropicWithOptionalWebSearch(apiKey, model, flatMessages, sender, streamId, options) {
+  const usePageFetch = options && options.pageFetchEnabled === true;
+  const bk = String(options && options.braveKey ? options.braveKey : "").trim();
+  const useWebSearch = !!(options && options.useWebSearch) && !!bk;
+  const shellWc = options && options.shellWc;
+  const useTabAgent = !!(options && options.tabAgentEnabled) && shellWc && typeof shellWc.isDestroyed === "function" && !shellWc.isDestroyed();
+  const tabAgentConfirmNavigation = options && options.tabAgentConfirmNavigation !== false;
+  if (!useWebSearch && !usePageFetch && !useTabAgent) {
+    const { system, anthMsgs } = buildAnthropicFlatFromUiMessages(flatMessages);
+    await aiChatAnthropicStreamPrepared(apiKey, model, system, anthMsgs, sender, streamId);
+    return;
+  }
+  const tools = [];
+  if (useWebSearch) tools.push(...ANTHROPIC_WEB_SEARCH_TOOLS);
+  if (usePageFetch) tools.push(ANTHROPIC_FETCH_PAGE_TEXT_TOOL);
+  if (useTabAgent) {
+    tools.push(ANTHROPIC_TAB_AGENT_OPEN_TOOL, ANTHROPIC_TAB_AGENT_READ_TOOL);
+  }
+  if (!tools.length) {
+    const { system, anthMsgs } = buildAnthropicFlatFromUiMessages(flatMessages);
+    await aiChatAnthropicStreamPrepared(apiKey, model, system, anthMsgs, sender, streamId);
+    return;
+  }
+  let { system, anthMsgs } = buildAnthropicFlatFromUiMessages(flatMessages);
+  let work = anthMsgs.map((m) => ({ role: m.role, content: m.content }));
+  let searchCalls = 0;
+  let pageFetchCalls = 0;
+  let tabOpenCalls = 0;
+  let tabReadCalls = 0;
+  for (let round = 0; round < AI_WEB_SEARCH_MAX_ROUNDS; round++) {
+    let data;
+    try {
+      data = await aiChatAnthropicMessagesOnce(apiKey, model, system, work, {
+        tools,
+        tool_choice: { type: "auto" },
+      });
+    } catch (e) {
+      if (anthropicToolsUnsupportedFromError(e.httpStatus, e.responseBody)) {
+        const prep = buildAnthropicFlatFromUiMessages(flatMessages);
+        await aiChatAnthropicStreamPrepared(apiKey, model, prep.system, prep.anthMsgs, sender, streamId);
+        return;
+      }
+      throw e;
+    }
+    const stopReason = typeof data.stop_reason === "string" ? data.stop_reason : "";
+    const content = data.content;
+    if (stopReason === "tool_use" && Array.isArray(content)) {
+      work.push({ role: "assistant", content });
+      const toolResults = [];
+      for (const block of content) {
+        if (!block || block.type !== "tool_use") continue;
+        const name = typeof block.name === "string" ? block.name : "";
+        const tid = typeof block.id === "string" ? block.id : "";
+        let out = "";
+        if (name === "web_search") {
+          if (!useWebSearch) {
+            out = "Web search is not enabled for this request.";
+          } else if (searchCalls >= AI_WEB_SEARCH_MAX_CALLS) {
+            out = "Web search limit reached for this message.";
+          } else {
+            searchCalls++;
+            const inp = block.input && typeof block.input === "object" ? block.input : {};
+            const q = typeof inp.query === "string" ? inp.query : "";
+            out = await performBraveWebSearch(bk, q);
+          }
+        } else if (name === "fetch_page_text") {
+          if (!usePageFetch) {
+            out = "Page fetch is not enabled for this request.";
+          } else if (pageFetchCalls >= AI_PAGE_FETCH_MAX_CALLS) {
+            out = "Page fetch limit reached for this message.";
+          } else {
+            pageFetchCalls++;
+            const inp = block.input && typeof block.input === "object" ? block.input : {};
+            const pageUrl = typeof inp.url === "string" ? inp.url : "";
+            out = await performFetchPageText(pageUrl);
+          }
+        } else if (name === "open_browser_tab") {
+          if (!useTabAgent) {
+            out = "Tab agent is not enabled for this request.";
+          } else if (tabOpenCalls >= AI_TAB_AGENT_OPEN_MAX) {
+            out = "open_browser_tab limit reached for this message.";
+          } else {
+            tabOpenCalls++;
+            const inp = block.input && typeof block.input === "object" ? block.input : {};
+            const pageUrl = typeof inp.url === "string" ? inp.url : "";
+            const activate = inp.activate === true;
+            const raw = await invokeShellTabTool(shellWc, {
+              op: "open_browser_tab",
+              url: pageUrl,
+              activate,
+              confirmNavigation: tabAgentConfirmNavigation,
+            });
+            out = formatTabAgentToolResultForLlm(raw);
+          }
+        } else if (name === "read_browser_tab_text") {
+          if (!useTabAgent) {
+            out = "Tab agent is not enabled for this request.";
+          } else if (tabReadCalls >= AI_TAB_AGENT_READ_MAX) {
+            out = "read_browser_tab_text limit reached for this message.";
+          } else {
+            tabReadCalls++;
+            const inp = block.input && typeof block.input === "object" ? block.input : {};
+            const tabIdArg = typeof inp.tab_id === "string" ? inp.tab_id : "";
+            const raw = await invokeShellTabTool(shellWc, {
+              op: "read_browser_tab_text",
+              tab_id: tabIdArg,
+            });
+            out = formatTabAgentToolResultForLlm(raw);
+          }
+        } else {
+          out = "Unsupported tool.";
+        }
+        if (tid) toolResults.push({ type: "tool_result", tool_use_id: tid, content: out });
+      }
+      if (toolResults.length) {
+        work.push({ role: "user", content: toolResults });
+      }
+      continue;
+    }
+    const text = anthropicConcatTextBlocks(content);
+    if (text.trim()) {
+      try {
+        sender.send("nebula-ai-chat-chunk", { streamId, text });
+      } catch {
+        /* */
+      }
+      return;
+    }
+    break;
+  }
+  await aiChatAnthropicStreamPrepared(apiKey, model, system, work, sender, streamId);
+}
+
+async function aiChatAnthropicStream(apiKey, model, messages, sender, streamId) {
+  const { system, anthMsgs } = buildAnthropicFlatFromUiMessages(messages);
+  await aiChatAnthropicStreamPrepared(apiKey, model, system, anthMsgs, sender, streamId);
+}
+
+function openAiMessagesToGeminiContents(messages) {
+  let systemInstruction = null;
+  const sysParts = [];
+  const contents = [];
+  for (const m of messages) {
+    if (m.role === "system") sysParts.push(m.content);
+  }
+  if (sysParts.length) {
+    systemInstruction = { parts: [{ text: sysParts.join("\n\n") }] };
+  }
+  for (const m of messages) {
+    if (m.role === "system") continue;
+    const role = m.role === "assistant" ? "model" : "user";
+    contents.push({ role, parts: [{ text: m.content }] });
+  }
+  const merged = [];
+  for (const c of contents) {
+    const last = merged[merged.length - 1];
+    if (last && last.role === c.role) {
+      last.parts[0].text += "\n\n" + c.parts[0].text;
+    } else merged.push({ role: c.role, parts: [{ text: c.parts[0].text }] });
+  }
+  return { systemInstruction, contents: merged };
+}
+
+async function geminiGenerateContentJson(apiKey, model, bodyObj) {
+  const key = String(apiKey || "").trim();
+  if (!key) throw new Error("Gemini: missing API key");
+  const safeModel = encodeURIComponent(String(model || "").trim());
+  if (!safeModel) throw new Error("Gemini: missing model");
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${safeModel}:generateContent?key=${encodeURIComponent(key)}`;
+  const r = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify(bodyObj),
+  });
+  const errBody = await r.text().catch(() => "");
+  if (!r.ok) {
+    const err = new Error(truncateAiErrorText(`Gemini ${r.status}: ${errBody}`, 400));
+    err.httpStatus = r.status;
+    err.responseBody = errBody;
+    throw err;
+  }
+  try {
+    return JSON.parse(errBody);
+  } catch {
+    throw new Error("Gemini: invalid JSON response");
+  }
+}
+
+function geminiToolsUnsupportedFromError(status, bodyText) {
+  if (status !== 400 && status !== 404) return false;
+  const s = String(bodyText || "").toLowerCase();
+  return (
+    (s.includes("tool") || s.includes("function") || s.includes("functiondeclaration")) &&
+    (s.includes("unknown") || s.includes("unrecognized") || s.includes("invalid") || s.includes("not supported"))
+  );
+}
+
+async function aiChatGeminiWithOptionalWebSearch(apiKey, model, flatMessages, sender, streamId, options) {
+  const usePageFetch = options && options.pageFetchEnabled === true;
+  const bk = String(options && options.braveKey ? options.braveKey : "").trim();
+  const useWebSearch = !!(options && options.useWebSearch) && !!bk;
+  const shellWc = options && options.shellWc;
+  const useTabAgent = !!(options && options.tabAgentEnabled) && shellWc && typeof shellWc.isDestroyed === "function" && !shellWc.isDestroyed();
+  const tabAgentConfirmNavigation = options && options.tabAgentConfirmNavigation !== false;
+  if (!useWebSearch && !usePageFetch && !useTabAgent) {
+    await aiChatGeminiStream(apiKey, model, flatMessages, sender, streamId);
+    return;
+  }
+  const decls = [];
+  if (useWebSearch) decls.push(GEMINI_WEB_SEARCH_TOOL_DECL);
+  if (usePageFetch) decls.push(GEMINI_FETCH_PAGE_TEXT_TOOL_DECL);
+  if (useTabAgent) {
+    decls.push(GEMINI_TAB_AGENT_OPEN_DECL, GEMINI_TAB_AGENT_READ_DECL);
+  }
+  if (!decls.length) {
+    await aiChatGeminiStream(apiKey, model, flatMessages, sender, streamId);
+    return;
+  }
+  const { systemInstruction, contents } = openAiMessagesToGeminiContents(flatMessages);
+  if (!contents.length) throw new Error("Gemini: no messages");
+  const toolsPayload = {
+    tools: [{ functionDeclarations: decls }],
+    toolConfig: { functionCallingConfig: { mode: "AUTO" } },
+  };
+  let gemContents = contents.map((c) => ({ role: c.role, parts: c.parts.map((p) => ({ ...p })) }));
+  let searchCalls = 0;
+  let pageFetchCalls = 0;
+  let tabOpenCalls = 0;
+  let tabReadCalls = 0;
+  for (let round = 0; round < AI_WEB_SEARCH_MAX_ROUNDS; round++) {
+    const bodyObj = { contents: gemContents, ...toolsPayload };
+    if (systemInstruction && String(systemInstruction.parts[0].text || "").trim()) {
+      bodyObj.systemInstruction = systemInstruction;
+    }
+    let data;
+    try {
+      data = await geminiGenerateContentJson(apiKey, model, bodyObj);
+    } catch (e) {
+      if (geminiToolsUnsupportedFromError(e.httpStatus, e.responseBody)) {
+        await aiChatGeminiStream(apiKey, model, flatMessages, sender, streamId);
+        return;
+      }
+      throw e;
+    }
+    const fb = data.promptFeedback;
+    if (fb && fb.blockReason) {
+      throw new Error(typeof fb.blockReason === "string" ? `Gemini blocked: ${fb.blockReason}` : "Gemini blocked the prompt.");
+    }
+    const cand = data.candidates && data.candidates[0];
+    const parts = cand && cand.content && Array.isArray(cand.content.parts) ? cand.content.parts : [];
+    const fcParts = parts.filter((p) => p && p.functionCall);
+    const textPieces = [];
+    for (const p of parts) {
+      if (p && typeof p.text === "string" && p.text) textPieces.push(p.text);
+    }
+    const textJoined = textPieces.join("");
+    if (fcParts.length) {
+      gemContents.push({ role: "model", parts: parts.map((p) => ({ ...p })) });
+      const userParts = [];
+      for (const p of fcParts) {
+        const fc = p.functionCall || {};
+        const name = typeof fc.name === "string" ? fc.name : "";
+        const args = fc.args && typeof fc.args === "object" ? fc.args : {};
+        let out = "";
+        if (name === "web_search") {
+          if (!useWebSearch) {
+            out = "Web search is not enabled for this request.";
+          } else if (searchCalls >= AI_WEB_SEARCH_MAX_CALLS) {
+            out = "Web search limit reached for this message.";
+          } else {
+            searchCalls++;
+            const q = typeof args.query === "string" ? args.query : "";
+            out = await performBraveWebSearch(bk, q);
+          }
+        } else if (name === "fetch_page_text") {
+          if (!usePageFetch) {
+            out = "Page fetch is not enabled for this request.";
+          } else if (pageFetchCalls >= AI_PAGE_FETCH_MAX_CALLS) {
+            out = "Page fetch limit reached for this message.";
+          } else {
+            pageFetchCalls++;
+            const pageUrl = typeof args.url === "string" ? args.url : "";
+            out = await performFetchPageText(pageUrl);
+          }
+        } else if (name === "open_browser_tab") {
+          if (!useTabAgent) {
+            out = "Tab agent is not enabled for this request.";
+          } else if (tabOpenCalls >= AI_TAB_AGENT_OPEN_MAX) {
+            out = "open_browser_tab limit reached for this message.";
+          } else {
+            tabOpenCalls++;
+            const pageUrl = typeof args.url === "string" ? args.url : "";
+            const activate = args.activate === true;
+            const raw = await invokeShellTabTool(shellWc, {
+              op: "open_browser_tab",
+              url: pageUrl,
+              activate,
+              confirmNavigation: tabAgentConfirmNavigation,
+            });
+            out = formatTabAgentToolResultForLlm(raw);
+          }
+        } else if (name === "read_browser_tab_text") {
+          if (!useTabAgent) {
+            out = "Tab agent is not enabled for this request.";
+          } else if (tabReadCalls >= AI_TAB_AGENT_READ_MAX) {
+            out = "read_browser_tab_text limit reached for this message.";
+          } else {
+            tabReadCalls++;
+            const tabIdArg = typeof args.tab_id === "string" ? args.tab_id : "";
+            const raw = await invokeShellTabTool(shellWc, {
+              op: "read_browser_tab_text",
+              tab_id: tabIdArg,
+            });
+            out = formatTabAgentToolResultForLlm(raw);
+          }
+        } else {
+          out = "Unsupported tool.";
+        }
+        const respName = name && name.length ? name : "unknown_tool";
+        userParts.push({
+          functionResponse: {
+            name: respName,
+            response: { content: out },
+          },
+        });
+      }
+      gemContents.push({ role: "user", parts: userParts });
+      continue;
+    }
+    if (textJoined.trim()) {
+      try {
+        sender.send("nebula-ai-chat-chunk", { streamId, text: textJoined });
+      } catch {
+        /* */
+      }
+      return;
+    }
+    break;
+  }
+  await aiChatGeminiStreamPrepared(apiKey, model, systemInstruction, gemContents, sender, streamId);
+}
+
+async function aiChatGeminiStreamPrepared(apiKey, model, systemInstruction, contents, sender, streamId) {
+  const key = String(apiKey || "").trim();
+  if (!key) throw new Error("Gemini: missing API key");
+  const safeModel = encodeURIComponent(String(model || "").trim());
+  if (!safeModel) throw new Error("Gemini: missing model");
+  if (!contents.length) throw new Error("Gemini: no messages");
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${safeModel}:streamGenerateContent?key=${encodeURIComponent(key)}&alt=sse`;
+  const body = {
+    contents,
+  };
+  if (systemInstruction && String(systemInstruction.parts[0].text || "").trim()) {
+    body.systemInstruction = systemInstruction;
+  }
+  const r = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) {
+    const errBody = await r.text().catch(() => "");
+    throw new Error(truncateAiErrorText(`Gemini ${r.status}: ${errBody}`, 400));
+  }
+  let acc = "";
+  await readSseFromResponse(r, async (_ev, data) => {
+    if (!data || data === "[DONE]") return;
+    try {
+      const j = JSON.parse(data);
+      const parts = j.candidates?.[0]?.content?.parts;
+      if (!Array.isArray(parts)) return;
+      let piece = "";
+      for (const p of parts) {
+        if (p && typeof p.text === "string") piece += p.text;
+      }
+      if (!piece) return;
+      if (acc.length > 0 && piece.startsWith(acc)) {
+        const delta = piece.slice(acc.length);
+        acc = piece;
+        if (delta) sender.send("nebula-ai-chat-chunk", { streamId, text: delta });
+      } else if (!acc) {
+        sender.send("nebula-ai-chat-chunk", { streamId, text: piece });
+        acc = piece;
+      } else {
+        sender.send("nebula-ai-chat-chunk", { streamId, text: piece });
+        acc += piece;
+      }
+    } catch {
+      /* ignore */
+    }
+  });
+}
+
+async function aiChatGeminiStream(apiKey, model, messages, sender, streamId) {
+  const key = String(apiKey || "").trim();
+  if (!key) throw new Error("Gemini: missing API key");
+  const modelId = String(model || "").trim();
+  if (!modelId) throw new Error("Gemini: missing model");
+  const { systemInstruction, contents } = openAiMessagesToGeminiContents(messages);
+  if (!contents.length) throw new Error("Gemini: no messages");
+  await aiChatGeminiStreamPrepared(apiKey, modelId, systemInstruction, contents, sender, streamId);
+}
+
+ipcMain.handle("nebula-ai-status", () => {
+  const locked = hasNebulaLocalAccount() && !isNebulaVaultSecretsUnlocked();
+  const providers = {};
+  for (const p of ["openai", "anthropic", "google"]) {
+    const row = getAiVaultEntryRow(p);
+    const hasKey = !!(row && typeof row.password === "string" && row.password.trim().length > 0);
+    providers[p] = { hasKey };
+  }
+  const braveRow = getBraveSearchVaultEntryRow();
+  const braveSearch = {
+    hasKey: !!(braveRow && typeof braveRow.password === "string" && braveRow.password.trim().length > 0),
+  };
+  return { locked, providers, braveSearch };
+});
+
+ipcMain.handle("nebula-ai-save-key", (_e, payload) => {
+  if (hasNebulaLocalAccount() && !isNebulaVaultSecretsUnlocked()) {
+    return { ok: false, locked: true };
+  }
+  const provRaw = typeof payload?.provider === "string" ? payload.provider.trim().toLowerCase() : "openai";
+  const apiKey = typeof payload?.apiKey === "string" ? payload.apiKey.trim() : "";
+  const entries = loadVaultEntries();
+
+  if (provRaw === "brave-search" || provRaw === "bravesearch") {
+    const url = nebulaAiBraveSearchVaultUrl();
+    const idx = entries.findIndex((e) => e && typeof e.url === "string" && e.url === url);
+    if (!apiKey) {
+      if (idx >= 0) {
+        entries.splice(idx, 1);
+        saveVaultEntries(entries);
+      }
+      return { ok: true, cleared: true };
+    }
+    const now = Date.now();
+    const row = {
+      id: idx >= 0 ? entries[idx].id : crypto.randomUUID(),
+      url,
+      origin: "https://nebula.settings",
+      title: "Brave Search API key (Nebula)",
+      username: "brave-search",
+      password: apiKey,
+      notes: "Used for Nebula AI assistant web search only. Hidden from the password list.",
+      createdAt: idx >= 0 ? entries[idx].createdAt : now,
+      updatedAt: now,
+    };
+    if (idx >= 0) entries[idx] = row;
+    else entries.unshift(row);
+    saveVaultEntries(entries);
+    return { ok: true };
+  }
+
+  const provider = provRaw === "anthropic" ? "anthropic" : provRaw === "google" ? "google" : "openai";
+  const url = nebulaAiVaultUrl(provider);
+  const idx = entries.findIndex((e) => e && typeof e.url === "string" && e.url === url);
+  const titles = {
+    openai: "OpenAI API key (Nebula)",
+    anthropic: "Anthropic API key (Nebula)",
+    google: "Google Gemini API key (Nebula)",
+  };
+  if (!apiKey) {
+    if (idx >= 0) {
+      entries.splice(idx, 1);
+      saveVaultEntries(entries);
+    }
+    return { ok: true, cleared: true };
+  }
+  const now = Date.now();
+  const row = {
+    id: idx >= 0 ? entries[idx].id : crypto.randomUUID(),
+    url,
+    origin: "https://nebula.settings",
+    title: titles[provider],
+    username: provider,
+    password: apiKey,
+    notes: "Used for Nebula AI assistant only. Hidden from the password list.",
+    createdAt: idx >= 0 ? entries[idx].createdAt : now,
+    updatedAt: now,
+  };
+  if (idx >= 0) entries[idx] = row;
+  else entries.unshift(row);
+  saveVaultEntries(entries);
+  return { ok: true };
+});
+
+ipcMain.handle("nebula-ai-chat-stream", async (event, payload) => {
+  const messages = normalizeAiChatPayloadMessages(payload);
+  if (!messages) return { ok: false, error: "invalid_messages" };
+  const streamId =
+    typeof payload?.streamId === "string" && payload.streamId.trim().length >= 8
+      ? payload.streamId.trim().slice(0, 128)
+      : crypto.randomUUID();
+  const provRaw = typeof payload?.provider === "string" ? payload.provider.trim().toLowerCase() : "openai";
+  const provider = provRaw === "anthropic" ? "anthropic" : provRaw === "google" ? "google" : "openai";
+  const model = typeof payload?.model === "string" ? payload.model.trim().slice(0, 128) : "";
+  if (!model) return { ok: false, error: "missing_model" };
+  const sec = getAiSecretsForApi(provider);
+  if (sec.locked) return { ok: false, error: "vault_locked" };
+  if (!String(sec.apiKey || "").trim()) return { ok: false, error: "missing_api_key" };
+
+  const sender = event.sender;
+  void (async () => {
+    try {
+      const settings = loadSettings();
+      const ai = settings.aiAssistant || DEFAULT_AI_ASSISTANT;
+      const braveSec = getBraveSearchApiKeyForSearch();
+      const useWebSearch =
+        ai.webSearchEnabled === true && !braveSec.locked && String(braveSec.apiKey || "").trim().length > 0;
+      const usePageFetch = ai.pageFetchEnabled === true;
+      const useTabAgent = ai.tabAgentEnabled === true;
+      const assistantToolOptions = {
+        useWebSearch,
+        pageFetchEnabled: usePageFetch,
+        braveKey: braveSec.apiKey,
+        tabAgentEnabled: useTabAgent,
+        tabAgentConfirmNavigation: ai.tabAgentConfirmNavigation !== false,
+        shellWc: sender,
+      };
+      const needsAssistantTooling = useWebSearch || usePageFetch || useTabAgent;
+      if (provider === "anthropic") {
+        if (needsAssistantTooling) {
+          await aiChatAnthropicWithOptionalWebSearch(sec.apiKey, model, messages, sender, streamId, assistantToolOptions);
+        } else {
+          await aiChatAnthropicStream(sec.apiKey, model, messages, sender, streamId);
+        }
+      } else if (provider === "google") {
+        if (needsAssistantTooling) {
+          await aiChatGeminiWithOptionalWebSearch(sec.apiKey, model, messages, sender, streamId, assistantToolOptions);
+        } else {
+          await aiChatGeminiStream(sec.apiKey, model, messages, sender, streamId);
+        }
+      } else if (needsAssistantTooling) {
+        await aiChatOpenAIWithOptionalWebSearch(ai.openaiBaseUrl, sec.apiKey, model, messages, sender, streamId, assistantToolOptions);
+      } else {
+        await aiChatOpenAIStream(ai.openaiBaseUrl, sec.apiKey, model, messages, sender, streamId);
+      }
+      try {
+        sender.send("nebula-ai-chat-done", { streamId });
+      } catch {
+        /* */
+      }
+    } catch (err) {
+      try {
+        sender.send("nebula-ai-chat-error", {
+          streamId,
+          error: truncateAiErrorText(String(err && err.message ? err.message : err), 600),
+        });
+      } catch {
+        /* */
+      }
+    }
+  })();
+
+  return { ok: true, streamId };
 });
 
 const SITE_PERM_KEYS = new Set([
@@ -2183,6 +3823,7 @@ function safeImportedVaultEntry(raw, now) {
   const urlRaw = typeof raw.url === "string" ? raw.url.trim() : "";
   if (!urlRaw) return null;
   if (urlRaw.includes("nebula.settings/translation")) return null;
+  if (urlRaw.includes("nebula.settings/ai/")) return null;
   let url = urlRaw;
   let origin = "";
   try {
@@ -2213,7 +3854,7 @@ ipcMain.handle("nebula-vault-export-json-file", async (event, payload) => {
   const win = BrowserWindow.fromWebContents(event.sender);
   const entries = loadVaultEntries();
   const includePw = !(payload && payload.includePasswords === false);
-  const entriesFiltered = entries.filter((e) => !isNebulaTranslationVaultEntry(e));
+  const entriesFiltered = entries.filter((e) => !isNebulaTranslationVaultEntry(e) && !isNebulaAiVaultEntry(e));
   const entriesOut = includePw
     ? entriesFiltered
     : entriesFiltered.map((e) => {

@@ -95,6 +95,22 @@
               <p id="translate-panel-hint" class="settings-hint translate-panel-hint"></p>
             </div>
           </div>
+          <div class="ai-toolbar-wrap">
+            <button
+              type="button"
+              class="icon-btn"
+              id="btn-ai"
+              title="AI assistant"
+              aria-label="AI assistant"
+              aria-expanded="false"
+              aria-controls="ai-drawer"
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <path d="M12 3l1.5 4.5L18 9l-4.5 1.5L12 15l-1.5-4.5L6 9l4.5-1.5L12 3z" />
+                <path d="M5 19l.8-2.4 2.4-.8-2.4-.8L5 13l-.8 2.4-2.4.8 2.4.8L5 19zM19 16l-.5 1.5-1.5.5 1.5.5.5 1.5.5-1.5 1.5-.5-1.5-.5L19 16z" />
+              </svg>
+            </button>
+          </div>
         </nav>
         <form class="omnibox-wrap" id="no-drag">
           <div class="omnibox">
@@ -207,6 +223,56 @@
     </header>
     <main class="content no-drag">
       <div id="webview-stack"></div>
+      <aside id="ai-drawer" class="ai-drawer" hidden aria-hidden="true">
+        <div class="ai-drawer-panel" role="dialog" aria-modal="false" aria-labelledby="ai-drawer-title">
+          <div class="ai-drawer-header">
+            <h2 id="ai-drawer-title" class="ai-drawer-title">Assistant</h2>
+            <button type="button" class="icon-btn" id="ai-drawer-close" title="Close" aria-label="Close assistant">✕</button>
+          </div>
+          <div class="ai-drawer-toolbar">
+            <label class="ai-drawer-field">
+              <span class="ai-drawer-label">Provider</span>
+              <select id="ai-provider" class="settings-select ai-drawer-select" aria-label="AI provider"></select>
+            </label>
+            <label class="ai-drawer-field">
+              <span class="ai-drawer-label">Model</span>
+              <select id="ai-model" class="settings-select ai-drawer-select" aria-label="Model"></select>
+            </label>
+          </div>
+          <div class="ai-drawer-conv-row">
+            <label class="ai-drawer-field ai-drawer-field--grow">
+              <span class="ai-drawer-label">Conversation</span>
+              <select id="ai-conversation-select" class="settings-select ai-drawer-select" aria-label="Saved conversation"></select>
+            </label>
+            <div class="ai-drawer-conv-actions">
+              <button type="button" class="settings-action-btn" id="ai-conv-new" title="Start a new chat">New</button>
+              <button type="button" class="settings-save-btn" id="ai-conv-save" title="Save this chat to this profile">Save</button>
+              <button type="button" class="settings-action-btn" id="ai-conv-delete" title="Delete this chat">Delete</button>
+            </div>
+          </div>
+          <div id="ai-messages" class="ai-messages" role="log" aria-relevant="additions" aria-live="polite"></div>
+          <div id="ai-thinking" class="ai-thinking" hidden aria-hidden="true">
+            <span class="ai-thinking-label">Thinking</span>
+            <span class="ai-thinking-dots" aria-hidden="true">
+              <span class="ai-thinking-dot"></span>
+              <span class="ai-thinking-dot"></span>
+              <span class="ai-thinking-dot"></span>
+            </span>
+          </div>
+          <div class="ai-drawer-add-row">
+            <input type="text" id="ai-add-model-input" class="settings-input ai-add-model-input" spellcheck="false" autocomplete="off" placeholder="Custom model id" />
+            <button type="button" class="settings-action-btn" id="ai-add-model-btn">Add model</button>
+          </div>
+          <div class="ai-drawer-compose">
+            <textarea id="ai-input" class="ai-input settings-input" rows="3" spellcheck="true" placeholder="Ask something… (Enter to send, Shift+Enter for new line)"></textarea>
+            <div class="ai-drawer-compose-actions">
+              <button type="button" class="settings-save-btn" id="ai-send-btn">Send</button>
+              <button type="button" class="settings-action-btn" id="ai-clear-btn">Clear chat</button>
+            </div>
+          </div>
+          <p id="ai-drawer-hint" class="settings-hint ai-drawer-hint"></p>
+        </div>
+      </aside>
       <div id="split-drop-zones" class="split-drop-zones" hidden aria-hidden="true">
         <div class="split-drop split-drop--left" data-split-drop="left">Split left</div>
         <div class="split-drop split-drop--right" data-split-drop="right">Split right</div>
@@ -638,6 +704,10 @@
                 <span>Translate</span>
               </label>
               <label class="settings-checkbox-row">
+                <input type="checkbox" id="settings-tb-ai" />
+                <span>AI assistant</span>
+              </label>
+              <label class="settings-checkbox-row">
                 <input type="checkbox" id="settings-tb-zoom-reset" />
                 <span>Zoom reset (100%)</span>
               </label>
@@ -674,6 +744,98 @@
                 <button type="button" class="settings-action-btn" id="settings-translate-clear-key">Remove key</button>
               </div>
               <p id="settings-translate-key-status" class="settings-hint"></p>
+            </section>
+            <section class="settings-section">
+              <h3 class="settings-section-title">AI assistant</h3>
+              <p class="settings-hint">
+                Optional API keys are stored in the same vault as saved passwords. If you use a local account, unlock the vault to save or use keys. Requests are sent from Nebula (not from web pages). Saved chats in the assistant panel are stored in local storage per browsing profile (not in the vault).
+              </p>
+              <label class="settings-field">
+                <span class="settings-label">OpenAI-compatible base URL</span>
+                <input type="url" id="settings-ai-openai-base" class="settings-input" spellcheck="false" autocomplete="off" placeholder="https://api.openai.com/v1" />
+              </label>
+              <p class="settings-hint">Used for the OpenAI provider (including many proxies). Path should end with <code>/v1</code> or Nebula will append it.</p>
+              <h4 class="settings-subtitle">API keys</h4>
+              <label class="settings-field">
+                <span class="settings-label">OpenAI</span>
+                <input type="password" id="settings-ai-key-openai" class="settings-input" spellcheck="false" autocomplete="off" placeholder="Not shown after save" />
+              </label>
+              <div class="settings-bookmarks-row">
+                <button type="button" class="settings-save-btn" id="settings-ai-save-openai">Save OpenAI key</button>
+                <button type="button" class="settings-action-btn" id="settings-ai-clear-openai">Remove</button>
+              </div>
+              <label class="settings-field">
+                <span class="settings-label">Anthropic (Claude)</span>
+                <input type="password" id="settings-ai-key-anthropic" class="settings-input" spellcheck="false" autocomplete="off" placeholder="Not shown after save" />
+              </label>
+              <div class="settings-bookmarks-row">
+                <button type="button" class="settings-save-btn" id="settings-ai-save-anthropic">Save Anthropic key</button>
+                <button type="button" class="settings-action-btn" id="settings-ai-clear-anthropic">Remove</button>
+              </div>
+              <label class="settings-field">
+                <span class="settings-label">Google (Gemini)</span>
+                <input type="password" id="settings-ai-key-google" class="settings-input" spellcheck="false" autocomplete="off" placeholder="Not shown after save" />
+              </label>
+              <div class="settings-bookmarks-row">
+                <button type="button" class="settings-save-btn" id="settings-ai-save-google">Save Gemini key</button>
+                <button type="button" class="settings-action-btn" id="settings-ai-clear-google">Remove</button>
+              </div>
+              <p id="settings-ai-key-status" class="settings-hint"></p>
+              <h4 class="settings-subtitle">Web search (optional)</h4>
+              <p class="settings-hint">
+                When enabled, the assistant can call a <code>web_search</code> tool; queries are sent to
+                <a href="https://api.search.brave.com/" rel="noopener noreferrer" target="_blank">Brave Search</a>
+                (get a key from
+                <a href="https://brave.com/search/api/" rel="noopener noreferrer" target="_blank">Brave Search API</a>).
+                Stored in the vault like other keys.
+              </p>
+              <label class="settings-checkbox-row">
+                <input type="checkbox" id="settings-ai-web-search-enabled" />
+                <span>Allow assistant to search the web when answering</span>
+              </label>
+              <label class="settings-field">
+                <span class="settings-label">Brave Search API key</span>
+                <input type="password" id="settings-ai-key-brave-search" class="settings-input" spellcheck="false" autocomplete="off" placeholder="Not shown after save" />
+              </label>
+              <div class="settings-bookmarks-row">
+                <button type="button" class="settings-save-btn" id="settings-ai-save-brave-search">Save Brave key</button>
+                <button type="button" class="settings-action-btn" id="settings-ai-clear-brave-search">Remove</button>
+              </div>
+              <p id="settings-ai-brave-status" class="settings-hint"></p>
+              <h4 class="settings-subtitle">Page text fetch (optional)</h4>
+              <p class="settings-hint">
+                When enabled, the assistant can call <code>fetch_page_text</code> with an <strong>https</strong> or <strong>http</strong> URL. Nebula downloads the page in the main process (no visible tab), strips HTML to plain text, and returns a capped excerpt to the model — <strong>not</strong> your logged-in session or cookies. Private IPs and <code>file:</code> URLs are blocked.
+              </p>
+              <label class="settings-checkbox-row">
+                <input type="checkbox" id="settings-ai-page-fetch-enabled" />
+                <span>Allow assistant to fetch page text from URLs</span>
+              </label>
+              <h4 class="settings-subtitle">Tab agent (Tier C, optional)</h4>
+              <p class="settings-hint">
+                When enabled, the assistant can call <code>open_browser_tab</code> and <code>read_browser_tab_text</code> on real Nebula tabs — your profile cookies and JavaScript apply (unlike Tier A page fetch). Private IPs and non-http(s) URLs are blocked in the shell. Limits apply per assistant reply.
+              </p>
+              <label class="settings-checkbox-row">
+                <input type="checkbox" id="settings-ai-tab-agent-enabled" />
+                <span>Allow assistant to open tabs and read tab text</span>
+              </label>
+              <label class="settings-checkbox-row">
+                <input type="checkbox" id="settings-ai-tab-agent-confirm-nav" />
+                <span>Ask for confirmation before the assistant opens a URL in a new tab</span>
+              </label>
+              <h4 class="settings-subtitle">Extra model IDs (one per line)</h4>
+              <p class="settings-hint">These appear in the assistant’s model list next to built-in suggestions. Provider IDs change over time — add the exact id from your provider’s docs.</p>
+              <label class="settings-field">
+                <span class="settings-label">OpenAI</span>
+                <textarea id="settings-ai-custom-openai" class="settings-textarea" rows="3" spellcheck="false" placeholder="e.g. gpt-4o"></textarea>
+              </label>
+              <label class="settings-field">
+                <span class="settings-label">Anthropic</span>
+                <textarea id="settings-ai-custom-anthropic" class="settings-textarea" rows="3" spellcheck="false"></textarea>
+              </label>
+              <label class="settings-field">
+                <span class="settings-label">Google</span>
+                <textarea id="settings-ai-custom-google" class="settings-textarea" rows="3" spellcheck="false"></textarea>
+              </label>
             </section>
             <section class="settings-section">
               <h3 class="settings-section-title">Address bar suggestions</h3>

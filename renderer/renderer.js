@@ -22,6 +22,11 @@
   function sessionRestoreStorageKey() {
     return `nebula-session-restore-v2-${sanitizeProfileIdForSession(appSettings.activeProfileId)}`;
   }
+
+  function aiConversationsStorageKey() {
+    return `nebula-ai-conversations-v1-${sanitizeProfileIdForSession(appSettings.activeProfileId)}`;
+  }
+
   const PASSWORD_SAVE_DENY_KEY = "nebula-password-save-deny-origins-v1";
   const SESSION_VAULT_DENY_KEY = "nebula-session-vault-deny-origins-v1";
   const HISTORY_MAX = 3000;
@@ -423,7 +428,40 @@
   const translatePanelOriginal = document.getElementById("translate-panel-original");
   const translateDropdownWrap = document.querySelector(".translate-dropdown-wrap");
 
-  /** @type {Map<string, HTMLElement>} */
+  const AI_PRESET_MODELS = {
+    openai: ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "o1-mini", "o1-preview"],
+    anthropic: ["claude-3-5-sonnet-20241022", "claude-3-5-haiku-20241022", "claude-3-opus-20240229"],
+    google: ["gemini-2.0-flash", "gemini-1.5-pro", "gemini-1.5-flash"],
+  };
+
+  const btnAi = document.getElementById("btn-ai");
+  const aiToolbarWrap = document.querySelector(".ai-toolbar-wrap");
+  const aiDrawer = document.getElementById("ai-drawer");
+  const aiDrawerClose = document.getElementById("ai-drawer-close");
+  const aiProvider = document.getElementById("ai-provider");
+  const aiModel = document.getElementById("ai-model");
+  const aiMessagesEl = document.getElementById("ai-messages");
+  const aiInput = document.getElementById("ai-input");
+  const aiSendBtn = document.getElementById("ai-send-btn");
+  const aiClearBtn = document.getElementById("ai-clear-btn");
+  const aiAddModelBtn = document.getElementById("ai-add-model-btn");
+  const aiAddModelInput = document.getElementById("ai-add-model-input");
+  const aiDrawerHint = document.getElementById("ai-drawer-hint");
+  const aiConversationSelect = document.getElementById("ai-conversation-select");
+  const aiConvNewBtn = document.getElementById("ai-conv-new");
+  const aiConvSaveBtn = document.getElementById("ai-conv-save");
+  const aiConvDeleteBtn = document.getElementById("ai-conv-delete");
+  const aiThinkingRow = document.getElementById("ai-thinking");
+
+  /** @type {{ role: string, content: string }[]} */
+  let aiChatMessages = [];
+  let aiSendBusy = false;
+  /** @type {HTMLElement | null} */
+  let aiStreamBubbleEl = null;
+  /** @type {string} */
+  let activeAiConversationId = "";
+  const AI_CONVERSATIONS_STORE_VERSION = 1;
+  const AI_CONVERSATIONS_MAX_ITEMS = 48;
   const downloadElById = new Map();
 
   /** @type {{ id: string, el: Electron.WebviewTag | null, tabEl: HTMLElement, titleEl: HTMLElement, faviconEl: HTMLImageElement, groupId: string | null, guestWcId: number | null, guestPartition: string, isPrivate: boolean, translateBackUrl: string | null, translateInPageActive: boolean, translateInPagePollTimer: number | null, translateInPageTargetLang: string | null, muteBtn: HTMLButtonElement, camBtn: HTMLButtonElement, micBtn: HTMLButtonElement, mediaStrip: HTMLElement, mediaState: { audible: boolean, audioMuted: boolean, camera: boolean, microphone: boolean } }[]} */
@@ -472,7 +510,27 @@
     bookmark: true,
     sitePerm: true,
     translate: true,
+    ai: true,
     zoomReset: true,
+  };
+
+  const DEFAULT_AI_ASSISTANT_APP = {
+    activeProvider: "openai",
+    modelByProvider: {
+      openai: "gpt-4o-mini",
+      anthropic: "claude-3-5-sonnet-20241022",
+      google: "gemini-2.0-flash",
+    },
+    customModelsByProvider: {
+      openai: [],
+      anthropic: [],
+      google: [],
+    },
+    openaiBaseUrl: "https://api.openai.com/v1",
+    webSearchEnabled: false,
+    pageFetchEnabled: false,
+    tabAgentEnabled: false,
+    tabAgentConfirmNavigation: true,
   };
 
   const DEFAULT_APP_SETTINGS = {
@@ -490,6 +548,7 @@
     bookmarksBarMode: "auto",
     toolbarButtons: { ...DEFAULT_APP_TOOLBAR_BUTTONS },
     newTabButtonPlacement: "both",
+    aiAssistant: JSON.parse(JSON.stringify(DEFAULT_AI_ASSISTANT_APP)),
     searchSuggestions: {
       layerOrder: ["past", "local", "remote"],
       enablePastSearch: true,
@@ -511,7 +570,73 @@
     ...DEFAULT_APP_SETTINGS,
     searchSuggestions: { ...DEFAULT_APP_SETTINGS.searchSuggestions },
     toolbarButtons: { ...DEFAULT_APP_SETTINGS.toolbarButtons },
+    aiAssistant: JSON.parse(JSON.stringify(DEFAULT_APP_SETTINGS.aiAssistant)),
   };
+
+  function normalizeOpenAiBaseUrlApp(raw) {
+    const fallback = DEFAULT_AI_ASSISTANT_APP.openaiBaseUrl;
+    const s = typeof raw === "string" && raw.trim() ? raw.trim() : fallback;
+    try {
+      const u = new URL(s.includes("://") ? s : `https://${s}`);
+      if (u.protocol !== "http:" && u.protocol !== "https:") return fallback;
+      let path = (u.pathname || "").replace(/\/$/, "");
+      if (!path.endsWith("/v1")) {
+        path = path ? `${path}/v1` : "/v1";
+      }
+      const out = `${u.origin}${path}`.slice(0, 512);
+      return out || fallback;
+    } catch {
+      return fallback;
+    }
+  }
+
+  function normalizeAppAiAssistant(src) {
+    const provs = ["openai", "anthropic", "google"];
+    const raw = src && typeof src === "object" ? src : {};
+    let active = typeof raw.activeProvider === "string" ? raw.activeProvider.trim().toLowerCase() : "";
+    if (!provs.includes(active)) active = DEFAULT_AI_ASSISTANT_APP.activeProvider;
+    const defM = DEFAULT_AI_ASSISTANT_APP.modelByProvider;
+    const mergedM = raw.modelByProvider && typeof raw.modelByProvider === "object" ? raw.modelByProvider : {};
+    const modelByProvider = { ...defM };
+    for (const p of provs) {
+      const v = typeof mergedM[p] === "string" ? mergedM[p].trim().slice(0, 128) : "";
+      modelByProvider[p] = v || defM[p];
+    }
+    const rawCmp = raw.customModelsByProvider && typeof raw.customModelsByProvider === "object" ? raw.customModelsByProvider : {};
+    const customModelsByProvider = { openai: [], anthropic: [], google: [] };
+    const MAX_CUSTOM = 24;
+    const MAX_ID_LEN = 128;
+    for (const p of provs) {
+      const arr = Array.isArray(rawCmp[p]) ? rawCmp[p] : [];
+      const seen = new Set();
+      const out = [];
+      for (const x of arr) {
+        if (out.length >= MAX_CUSTOM) break;
+        const id = typeof x === "string" ? x.trim().slice(0, MAX_ID_LEN) : "";
+        if (!id || seen.has(id)) continue;
+        seen.add(id);
+        out.push(id);
+      }
+      customModelsByProvider[p] = out;
+    }
+    const openaiBaseUrl = normalizeOpenAiBaseUrlApp(
+      typeof raw.openaiBaseUrl === "string" ? raw.openaiBaseUrl : DEFAULT_AI_ASSISTANT_APP.openaiBaseUrl
+    );
+    const webSearchEnabled = raw.webSearchEnabled === true;
+    const pageFetchEnabled = raw.pageFetchEnabled === true;
+    const tabAgentEnabled = raw.tabAgentEnabled === true;
+    const tabAgentConfirmNavigation = raw.tabAgentConfirmNavigation === false ? false : true;
+    return {
+      activeProvider: active,
+      modelByProvider,
+      customModelsByProvider,
+      openaiBaseUrl,
+      webSearchEnabled,
+      pageFetchEnabled,
+      tabAgentEnabled,
+      tabAgentConfirmNavigation,
+    };
+  }
 
   function getSearchSettings() {
     return appSettings.searchSuggestions;
@@ -575,6 +700,7 @@
       },
       newTabButtonPlacement:
         typeof o.newTabButtonPlacement === "string" ? o.newTabButtonPlacement : DEFAULT_APP_SETTINGS.newTabButtonPlacement,
+      aiAssistant: normalizeAppAiAssistant(o.aiAssistant),
     };
     const ss = merged.searchSuggestions;
     const layers = ["past", "local", "remote"];
@@ -611,6 +737,7 @@
       bookmark: typeof tbm.bookmark === "boolean" ? tbm.bookmark : tb0.bookmark,
       sitePerm: typeof tbm.sitePerm === "boolean" ? tbm.sitePerm : tb0.sitePerm,
       translate: typeof tbm.translate === "boolean" ? tbm.translate : tb0.translate,
+      ai: typeof tbm.ai === "boolean" ? tbm.ai : tb0.ai,
       zoomReset: typeof tbm.zoomReset === "boolean" ? tbm.zoomReset : tb0.zoomReset,
     };
     const ntp = new Set(["header", "strip", "both"]);
@@ -628,6 +755,10 @@
         syncYoutubeAdSkipAdblockState();
         applyShellAppearance();
         syncChromeLayoutFromSettings();
+        syncAiProviderAndModelFromSettings();
+        if (typeof window.nebula.registerAiTabToolHandler === "function") {
+          window.nebula.registerAiTabToolHandler(handleAiTabToolMessage);
+        }
         return;
       } catch {
         /* */
@@ -637,6 +768,10 @@
     syncYoutubeAdSkipAdblockState();
     applyShellAppearance();
     syncChromeLayoutFromSettings();
+    syncAiProviderAndModelFromSettings();
+    if (typeof window.nebula.registerAiTabToolHandler === "function") {
+      window.nebula.registerAiTabToolHandler(handleAiTabToolMessage);
+    }
   }
 
   let shellSystemThemeCleanup = null;
@@ -686,6 +821,429 @@
     syncWelcomeThemeInAllTabs();
   }
 
+  function aiDrawerIsOpen() {
+    return !!(aiDrawer && !aiDrawer.hidden);
+  }
+
+  function sanitizeAiMessagesForStorage(ms) {
+    const out = [];
+    if (!Array.isArray(ms)) return out;
+    for (const m of ms) {
+      if (!m || typeof m !== "object") continue;
+      const role = m.role === "assistant" ? "assistant" : m.role === "system" ? "system" : "user";
+      const content = typeof m.content === "string" ? m.content : "";
+      if (role === "user" || role === "assistant" || role === "system") out.push({ role, content });
+    }
+    return out;
+  }
+
+  function loadAiConversationsStore() {
+    let raw = "";
+    try {
+      raw = localStorage.getItem(aiConversationsStorageKey()) || "";
+    } catch {
+      return { v: AI_CONVERSATIONS_STORE_VERSION, lastOpenedId: "", items: [] };
+    }
+    if (!raw) return { v: AI_CONVERSATIONS_STORE_VERSION, lastOpenedId: "", items: [] };
+    try {
+      const j = JSON.parse(raw);
+      const itemsIn = Array.isArray(j.items) ? j.items : [];
+      const items = [];
+      for (const it of itemsIn) {
+        if (!it || typeof it !== "object") continue;
+        const id = typeof it.id === "string" && it.id.trim() ? it.id.trim().slice(0, 80) : "";
+        if (!id) continue;
+        const title = typeof it.title === "string" ? it.title.trim().slice(0, 120) : "Chat";
+        const updatedAt = Number(it.updatedAt) || 0;
+        const messages = sanitizeAiMessagesForStorage(it.messages);
+        items.push({ id, title: title || "Chat", updatedAt, messages });
+      }
+      const lastOpenedId = typeof j.lastOpenedId === "string" ? j.lastOpenedId.trim().slice(0, 80) : "";
+      items.sort((a, b) => b.updatedAt - a.updatedAt);
+      return {
+        v: AI_CONVERSATIONS_STORE_VERSION,
+        lastOpenedId,
+        items: items.slice(0, AI_CONVERSATIONS_MAX_ITEMS),
+      };
+    } catch {
+      return { v: AI_CONVERSATIONS_STORE_VERSION, lastOpenedId: "", items: [] };
+    }
+  }
+
+  function saveAiConversationsStore(store) {
+    try {
+      localStorage.setItem(aiConversationsStorageKey(), JSON.stringify(store));
+    } catch {
+      /* quota or private mode */
+    }
+  }
+
+  function conversationTitleFromMessages(messages) {
+    const u = messages.find((m) => m && m.role === "user" && String(m.content || "").trim());
+    const t = u ? String(u.content).trim().replace(/\s+/g, " ") : "New chat";
+    return t.slice(0, 80) || "New chat";
+  }
+
+  function populateAiConversationSelect() {
+    if (!aiConversationSelect) return;
+    const store = loadAiConversationsStore();
+    const sorted = [...store.items].sort((a, b) => b.updatedAt - a.updatedAt);
+    aiConversationSelect.replaceChildren();
+    for (const it of sorted) {
+      const opt = document.createElement("option");
+      opt.value = it.id;
+      opt.textContent = it.title;
+      aiConversationSelect.appendChild(opt);
+    }
+    if (activeAiConversationId && sorted.some((x) => x.id === activeAiConversationId)) {
+      aiConversationSelect.value = activeAiConversationId;
+    }
+  }
+
+  function persistCurrentAiConversation() {
+    if (!activeAiConversationId) return;
+    const store = loadAiConversationsStore();
+    const msgs = sanitizeAiMessagesForStorage(aiChatMessages);
+    const title = conversationTitleFromMessages(msgs);
+    const row = { id: activeAiConversationId, title, updatedAt: Date.now(), messages: msgs };
+    const idx = store.items.findIndex((x) => x.id === activeAiConversationId);
+    if (idx >= 0) store.items[idx] = row;
+    else store.items.unshift(row);
+    store.items.sort((a, b) => b.updatedAt - a.updatedAt);
+    store.items = store.items.slice(0, AI_CONVERSATIONS_MAX_ITEMS);
+    store.lastOpenedId = activeAiConversationId;
+    saveAiConversationsStore(store);
+    populateAiConversationSelect();
+  }
+
+  function openAiConversationById(id) {
+    if (!id) return;
+    removeAiStreamBubble();
+    setAiThinkingVisible(false);
+    const store = loadAiConversationsStore();
+    const it = store.items.find((x) => x.id === id);
+    activeAiConversationId = id;
+    if (it && Array.isArray(it.messages)) {
+      aiChatMessages = it.messages.map((m) => ({
+        role: m.role === "assistant" ? "assistant" : m.role === "system" ? "system" : "user",
+        content: typeof m.content === "string" ? m.content : "",
+      }));
+    } else {
+      aiChatMessages = [];
+    }
+    renderAiMessageBubbles();
+    store.lastOpenedId = id;
+    saveAiConversationsStore(store);
+    populateAiConversationSelect();
+  }
+
+  function startNewAiConversation() {
+    const store = loadAiConversationsStore();
+    if (activeAiConversationId) {
+      const cur = store.items.find((x) => x.id === activeAiConversationId);
+      if (cur && cur.messages.length === 0 && cur.title === "New chat") return;
+    }
+    removeAiStreamBubble();
+    setAiThinkingVisible(false);
+    activeAiConversationId = `ac_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+    aiChatMessages = [];
+    renderAiMessageBubbles();
+    store.items.unshift({ id: activeAiConversationId, title: "New chat", updatedAt: Date.now(), messages: [] });
+    store.items.sort((a, b) => b.updatedAt - a.updatedAt);
+    store.items = store.items.slice(0, AI_CONVERSATIONS_MAX_ITEMS);
+    store.lastOpenedId = activeAiConversationId;
+    saveAiConversationsStore(store);
+    populateAiConversationSelect();
+  }
+
+  function deleteActiveAiConversation() {
+    if (!activeAiConversationId) return;
+    if (!confirm("Delete this conversation from this profile?")) return;
+    const store = loadAiConversationsStore();
+    store.items = store.items.filter((x) => x.id !== activeAiConversationId);
+    saveAiConversationsStore(store);
+    const sorted = [...store.items].sort((a, b) => b.updatedAt - a.updatedAt);
+    if (sorted.length) {
+      openAiConversationById(sorted[0].id);
+    } else {
+      activeAiConversationId = "";
+      startNewAiConversation();
+    }
+  }
+
+  function ensureAiConversationsOnDrawerOpen() {
+    const store = loadAiConversationsStore();
+    if (activeAiConversationId && store.items.some((x) => x.id === activeAiConversationId)) {
+      populateAiConversationSelect();
+      return;
+    }
+    if (store.lastOpenedId && store.items.some((x) => x.id === store.lastOpenedId)) {
+      openAiConversationById(store.lastOpenedId);
+      return;
+    }
+    if (store.items.length) {
+      const sorted = [...store.items].sort((a, b) => b.updatedAt - a.updatedAt);
+      openAiConversationById(sorted[0].id);
+      return;
+    }
+    startNewAiConversation();
+  }
+
+  function resetAiConversationsForProfileChange() {
+    activeAiConversationId = "";
+    aiChatMessages = [];
+  }
+
+  async function persistAiAssistantPatch(partial) {
+    const base = normalizeAppAiAssistant(appSettings.aiAssistant || {});
+    const next = normalizeAppAiAssistant({
+      ...base,
+      ...partial,
+      modelByProvider: { ...base.modelByProvider, ...(partial.modelByProvider || {}) },
+      customModelsByProvider: { ...base.customModelsByProvider, ...(partial.customModelsByProvider || {}) },
+    });
+    if (window.nebula?.setSettings) {
+      try {
+        const r = await window.nebula.setSettings({ aiAssistant: next });
+        appSettings = normalizeAppSettings(r);
+      } catch {
+        appSettings = normalizeAppSettings({ ...appSettings, aiAssistant: next });
+      }
+    } else {
+      appSettings = normalizeAppSettings({ ...appSettings, aiAssistant: next });
+    }
+    refreshAiModelSelect();
+    void refreshAiDrawerHint();
+  }
+
+  function buildMergedModelIds(provider) {
+    const pres = AI_PRESET_MODELS[provider] || [];
+    const custom =
+      (appSettings.aiAssistant &&
+        appSettings.aiAssistant.customModelsByProvider &&
+        appSettings.aiAssistant.customModelsByProvider[provider]) ||
+      [];
+    const seen = new Set();
+    const out = [];
+    for (const id of [...pres, ...custom]) {
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      out.push(id);
+    }
+    return out;
+  }
+
+  function refreshAiModelSelect() {
+    if (!aiProvider || !aiModel) return;
+    const provider =
+      aiProvider.value === "anthropic" ? "anthropic" : aiProvider.value === "google" ? "google" : "openai";
+    const ids = buildMergedModelIds(provider);
+    aiModel.replaceChildren();
+    if (!ids.length) return;
+    const current =
+      (appSettings.aiAssistant && appSettings.aiAssistant.modelByProvider && appSettings.aiAssistant.modelByProvider[provider]) || "";
+    for (const id of ids) {
+      const opt = document.createElement("option");
+      opt.value = id;
+      opt.textContent = id;
+      aiModel.appendChild(opt);
+    }
+    if (ids.length && !ids.includes(current)) {
+      const pick = ids[0];
+      aiModel.value = pick;
+      void persistAiAssistantPatch({ modelByProvider: { [provider]: pick } });
+      return;
+    }
+    if (ids.length) aiModel.value = current && ids.includes(current) ? current : ids[0];
+  }
+
+  async function refreshAiDrawerHint() {
+    if (!aiDrawerHint) return;
+    try {
+      const s = await window.nebula?.aiStatus?.();
+      if (!s) {
+        aiDrawerHint.textContent = "";
+        return;
+      }
+      if (s.locked) {
+        aiDrawerHint.textContent = "Saved passwords vault is locked — unlock it to use stored API keys.";
+        return;
+      }
+      const p =
+        aiProvider && aiProvider.value === "anthropic"
+          ? "anthropic"
+          : aiProvider && aiProvider.value === "google"
+            ? "google"
+            : "openai";
+      const hk = s.providers && s.providers[p] && s.providers[p].hasKey;
+      let msg = hk
+        ? "Key for this provider is stored in the vault."
+        : "No API key for this provider — add one in Settings → AI assistant.";
+      const aiCfg =
+        appSettings.aiAssistant && typeof appSettings.aiAssistant === "object" ? appSettings.aiAssistant : DEFAULT_AI_ASSISTANT_APP;
+      if (aiCfg.webSearchEnabled === true && !s.braveSearch?.hasKey) {
+        msg += " Web search is on but there is no Brave Search API key — add one under Settings → AI assistant → Web search.";
+      }
+      if (aiCfg.pageFetchEnabled === true) {
+        msg += " Page fetch is on — the assistant may request public http(s) pages as plain text (no cookies; see Settings).";
+      }
+      if (aiCfg.tabAgentEnabled === true) {
+        msg +=
+          " Tab agent is on — the assistant may open real tabs or read tab text (your profile cookies apply; confirm before open if enabled in Settings).";
+      }
+      aiDrawerHint.textContent = msg;
+    } catch {
+      aiDrawerHint.textContent = "";
+    }
+  }
+
+  function ensureAiProviderSelect() {
+    if (!aiProvider || aiProvider.dataset.nebulaAiInit === "1") return;
+    aiProvider.dataset.nebulaAiInit = "1";
+    aiProvider.replaceChildren();
+    for (const [val, label] of [
+      ["openai", "OpenAI"],
+      ["anthropic", "Anthropic (Claude)"],
+      ["google", "Google (Gemini)"],
+    ]) {
+      const opt = document.createElement("option");
+      opt.value = val;
+      opt.textContent = label;
+      aiProvider.appendChild(opt);
+    }
+  }
+
+  function syncAiProviderAndModelFromSettings() {
+    ensureAiProviderSelect();
+    if (!aiProvider) return;
+    const ap =
+      appSettings.aiAssistant && appSettings.aiAssistant.activeProvider ? String(appSettings.aiAssistant.activeProvider) : "openai";
+    aiProvider.value = ap === "anthropic" || ap === "google" ? ap : "openai";
+    refreshAiModelSelect();
+  }
+
+  function setAiThinkingVisible(on) {
+    if (!aiThinkingRow) return;
+    aiThinkingRow.hidden = !on;
+    aiThinkingRow.setAttribute("aria-hidden", on ? "false" : "true");
+  }
+
+  function removeAiStreamBubble() {
+    if (aiStreamBubbleEl && aiStreamBubbleEl.parentNode) {
+      aiStreamBubbleEl.remove();
+    }
+    aiStreamBubbleEl = null;
+  }
+
+  function renderAiMessageBubbles() {
+    if (!aiMessagesEl) return;
+    aiMessagesEl.replaceChildren();
+    for (const m of aiChatMessages) {
+      const div = document.createElement("div");
+      div.className =
+        "ai-msg " +
+        (m.role === "user" ? "ai-msg-user" : m.role === "error" ? "ai-msg-error" : "ai-msg-assistant");
+      div.textContent = m.content;
+      aiMessagesEl.appendChild(div);
+    }
+    queueMicrotask(() => {
+      try {
+        aiMessagesEl.scrollTop = aiMessagesEl.scrollHeight;
+      } catch {
+        /* */
+      }
+    });
+  }
+
+  function setAiDrawerOpen(open) {
+    if (!aiDrawer || !btnAi) return;
+    const wasOpen = !aiDrawer.hidden;
+    aiDrawer.hidden = !open;
+    aiDrawer.setAttribute("aria-hidden", open ? "false" : "true");
+    btnAi.setAttribute("aria-expanded", open ? "true" : "false");
+    if (open) {
+      closeTranslatePanel();
+      syncAiProviderAndModelFromSettings();
+      void refreshAiDrawerHint();
+      ensureAiConversationsOnDrawerOpen();
+    }
+    if (!open && wasOpen) scheduleRestoreGuestFocus();
+  }
+
+  function closeAiDrawer() {
+    setAiDrawerOpen(false);
+  }
+
+  function toggleAiDrawer() {
+    setAiDrawerOpen(!aiDrawerIsOpen());
+  }
+
+  async function aiSendUserMessage() {
+    if (aiSendBusy || !aiInput || !aiModel || !aiProvider) return;
+    const text = String(aiInput.value || "").trim();
+    if (!text) return;
+    const provider =
+      aiProvider.value === "anthropic" ? "anthropic" : aiProvider.value === "google" ? "google" : "openai";
+    const model = String(aiModel.value || "").trim();
+    if (!model) return;
+    aiInput.value = "";
+    aiChatMessages.push({ role: "user", content: text });
+    renderAiMessageBubbles();
+    const payloadMessages = aiChatMessages.filter((m) => m.role !== "error").map((m) => ({ role: m.role, content: m.content }));
+    aiSendBusy = true;
+    removeAiStreamBubble();
+    setAiThinkingVisible(true);
+    if (aiSendBtn) aiSendBtn.disabled = true;
+    if (aiInput) aiInput.disabled = true;
+    let full = "";
+    try {
+      if (typeof window.nebula?.aiChatStream !== "function") {
+        throw new Error("Streaming is not available.");
+      }
+      await new Promise((resolve, reject) => {
+        window.nebula.aiChatStream(
+          { provider, model, messages: payloadMessages },
+          (chunk) => {
+            setAiThinkingVisible(false);
+            full += chunk;
+            if (!aiMessagesEl) return;
+            if (!aiStreamBubbleEl) {
+              aiStreamBubbleEl = document.createElement("div");
+              aiStreamBubbleEl.className = "ai-msg ai-msg-assistant ai-msg-streaming";
+              aiStreamBubbleEl.setAttribute("aria-live", "polite");
+              aiMessagesEl.appendChild(aiStreamBubbleEl);
+            }
+            aiStreamBubbleEl.textContent = full;
+            queueMicrotask(() => {
+              try {
+                aiMessagesEl.scrollTop = aiMessagesEl.scrollHeight;
+              } catch {
+                /* */
+              }
+            });
+          },
+          () => resolve(),
+          (err) => reject(new Error(String(err || "Stream failed")))
+        );
+      });
+      removeAiStreamBubble();
+      if (full.trim()) {
+        aiChatMessages.push({ role: "assistant", content: full });
+      } else {
+        aiChatMessages.push({ role: "error", content: "Empty response." });
+      }
+    } catch (e) {
+      removeAiStreamBubble();
+      aiChatMessages.push({ role: "error", content: String(e && e.message ? e.message : e) });
+    }
+    setAiThinkingVisible(false);
+    if (aiSendBtn) aiSendBtn.disabled = false;
+    if (aiInput) aiInput.disabled = false;
+    aiSendBusy = false;
+    renderAiMessageBubbles();
+    persistCurrentAiConversation();
+  }
+
   function syncChromeLayoutFromSettings() {
     const tb = appSettings.toolbarButtons || {};
     if (btnHome) {
@@ -704,6 +1262,10 @@
       translateDropdownWrap.hidden = !tb.translate;
       translateDropdownWrap.setAttribute("aria-hidden", tb.translate ? "false" : "true");
     }
+    if (aiToolbarWrap) {
+      aiToolbarWrap.hidden = !tb.ai;
+      aiToolbarWrap.setAttribute("aria-hidden", tb.ai ? "false" : "true");
+    }
     if (btnZoomReset) {
       btnZoomReset.hidden = !tb.zoomReset;
       btnZoomReset.setAttribute("aria-hidden", tb.zoomReset ? "false" : "true");
@@ -718,6 +1280,7 @@
       btnNewTabStrip.setAttribute("aria-hidden", ntp === "header" ? "true" : "false");
     }
     if (!tb.translate) closeTranslatePanel();
+    if (!tb.ai) closeAiDrawer();
   }
 
   function syncYoutubeAdSkipAdblockState() {
@@ -2050,6 +2613,9 @@
       if (r?.ok) {
         if (vaultUnlockPass) vaultUnlockPass.value = "";
         await loadVaultEntriesFromMain();
+        void refreshTranslationKeyStatus();
+        void refreshAiKeyStatus();
+        if (aiDrawerIsOpen()) void refreshAiDrawerHint();
         queueMicrotask(() => vaultSearchInput?.focus());
         return;
       }
@@ -2094,6 +2660,12 @@
     return u.includes("nebula.settings/translation");
   }
 
+  function vaultEntryIsNebulaInternalAi(e) {
+    if (!e || typeof e !== "object") return false;
+    const u = typeof e.url === "string" ? e.url : "";
+    return u.includes("nebula.settings/ai/");
+  }
+
   function renderVaultList() {
     if (!vaultListEl) return;
     const q = (vaultSearchInput?.value || "").trim().toLowerCase();
@@ -2104,7 +2676,7 @@
           const hay = `${e.title || ""} ${e.username || ""} ${e.url || ""} ${e.origin || ""}`.toLowerCase();
           return hay.includes(q);
         });
-    list = list.filter((e) => !vaultEntryIsNebulaInternalTranslation(e));
+    list = list.filter((e) => !vaultEntryIsNebulaInternalTranslation(e) && !vaultEntryIsNebulaInternalAi(e));
     if (vaultListFilter === "session") {
       list = list.filter((e) => vaultEntryIsSessionPlaceholderEntry(e));
     } else if (vaultListFilter === "login") {
@@ -2478,6 +3050,7 @@
     if (sitePermPanel && !sitePermPanel.hidden) closeSitePermissionsPanel();
     hideOmniboxSuggestions();
     closeTranslatePanel();
+    closeAiDrawer();
     historyPanel.hidden = false;
     historyPanel.setAttribute("aria-hidden", "false");
     renderHistoryList();
@@ -2584,6 +3157,8 @@
     if (settingsPanel && !settingsPanel.hidden) closeSettingsPanel();
     if (historyPanel && !historyPanel.hidden) closeHistoryPanel();
     hideOmniboxSuggestions();
+    closeTranslatePanel();
+    closeAiDrawer();
     sitePermPanel.hidden = false;
     sitePermPanel.setAttribute("aria-hidden", "false");
     void refreshSitePermPanel();
@@ -2684,6 +3259,38 @@
     }
   }
 
+  async function refreshAiKeyStatus() {
+    const el = document.getElementById("settings-ai-key-status");
+    const elBr = document.getElementById("settings-ai-brave-status");
+    if (!el) return;
+    try {
+      const s = await window.nebula?.aiStatus?.();
+      if (!s) {
+        el.textContent = "";
+        if (elBr) elBr.textContent = "";
+        return;
+      }
+      if (s.locked) {
+        el.textContent = "Saved passwords vault is locked — unlock it to save or use AI API keys.";
+        if (elBr) elBr.textContent = "";
+        return;
+      }
+      const bits = [];
+      if (s.providers?.openai?.hasKey) bits.push("OpenAI");
+      if (s.providers?.anthropic?.hasKey) bits.push("Anthropic");
+      if (s.providers?.google?.hasKey) bits.push("Gemini");
+      el.textContent = bits.length ? "Keys in vault: " + bits.join(", ") + "." : "No AI API keys in the vault yet (optional).";
+      if (elBr) {
+        elBr.textContent = s.braveSearch?.hasKey
+          ? "Brave Search API key is stored in the vault."
+          : "No Brave Search API key in the vault (optional unless web search is enabled).";
+      }
+    } catch {
+      el.textContent = "";
+      if (elBr) elBr.textContent = "";
+    }
+  }
+
   function populateSettingsForm() {
     const s = appSettings;
     const ss = s.searchSuggestions;
@@ -2703,6 +3310,19 @@
       const n = document.getElementById(id);
       if (n) n.checked = !!v;
     };
+    const ai = s.aiAssistant && typeof s.aiAssistant === "object" ? s.aiAssistant : DEFAULT_AI_ASSISTANT_APP;
+    el("settings-ai-openai-base", ai.openaiBaseUrl || DEFAULT_AI_ASSISTANT_APP.openaiBaseUrl);
+    const setTa = (id, arr) => {
+      const n = document.getElementById(id);
+      if (n) n.value = (Array.isArray(arr) ? arr : []).join("\n");
+    };
+    setTa("settings-ai-custom-openai", ai.customModelsByProvider?.openai);
+    setTa("settings-ai-custom-anthropic", ai.customModelsByProvider?.anthropic);
+    setTa("settings-ai-custom-google", ai.customModelsByProvider?.google);
+    chk("settings-ai-web-search-enabled", ai.webSearchEnabled === true);
+    chk("settings-ai-page-fetch-enabled", ai.pageFetchEnabled === true);
+    chk("settings-ai-tab-agent-enabled", ai.tabAgentEnabled === true);
+    chk("settings-ai-tab-agent-confirm-nav", ai.tabAgentConfirmNavigation !== false);
     chk("settings-ss-past", ss.enablePastSearch);
     chk("settings-ss-bookmarks", ss.enableBookmarks);
     chk("settings-ss-history", ss.enableHistory);
@@ -2759,7 +3379,22 @@
     chk("settings-tb-bookmark", tbb.bookmark !== false);
     chk("settings-tb-site-perm", tbb.sitePerm !== false);
     chk("settings-tb-translate", tbb.translate !== false);
+    chk("settings-tb-ai", tbb.ai !== false);
     chk("settings-tb-zoom-reset", tbb.zoomReset !== false);
+  }
+
+  function parseAiModelLines(text) {
+    const lines = String(text || "").split(/\r?\n/);
+    const out = [];
+    const seen = new Set();
+    for (const line of lines) {
+      const id = line.trim().slice(0, 128);
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      out.push(id);
+      if (out.length >= 24) break;
+    }
+    return out;
   }
 
   function gatherSettingsPatchFromForm() {
@@ -2793,6 +3428,7 @@
       bookmark: !!(document.getElementById("settings-tb-bookmark")?.checked),
       sitePerm: !!(document.getElementById("settings-tb-site-perm")?.checked),
       translate: !!(document.getElementById("settings-tb-translate")?.checked),
+      ai: !!(document.getElementById("settings-tb-ai")?.checked),
       zoomReset: !!(document.getElementById("settings-tb-zoom-reset")?.checked),
     };
     return {
@@ -2822,6 +3458,19 @@
         const v = document.getElementById("settings-new-tab-placement")?.value || "both";
         return v === "header" || v === "strip" ? v : "both";
       })(),
+      aiAssistant: normalizeAppAiAssistant({
+        ...(appSettings.aiAssistant && typeof appSettings.aiAssistant === "object" ? appSettings.aiAssistant : DEFAULT_AI_ASSISTANT_APP),
+        openaiBaseUrl: String(document.getElementById("settings-ai-openai-base")?.value || "").trim(),
+        webSearchEnabled: chk("settings-ai-web-search-enabled"),
+        pageFetchEnabled: chk("settings-ai-page-fetch-enabled"),
+        tabAgentEnabled: chk("settings-ai-tab-agent-enabled"),
+        tabAgentConfirmNavigation: chk("settings-ai-tab-agent-confirm-nav"),
+        customModelsByProvider: {
+          openai: parseAiModelLines(document.getElementById("settings-ai-custom-openai")?.value),
+          anthropic: parseAiModelLines(document.getElementById("settings-ai-custom-anthropic")?.value),
+          google: parseAiModelLines(document.getElementById("settings-ai-custom-google")?.value),
+        },
+      }),
       searchSuggestions: {
         enablePastSearch: chk("settings-ss-past"),
         enableBookmarks: chk("settings-ss-bookmarks"),
@@ -2906,6 +3555,7 @@
     closePasswordSaveOfferPanel();
     closeVaultPanel();
     closeTranslatePanel();
+    closeAiDrawer();
     if (!findBar.hidden) closeFindBar();
     if (historyPanel && !historyPanel.hidden) closeHistoryPanel();
     if (sitePermPanel && !sitePermPanel.hidden) closeSitePermissionsPanel();
@@ -2917,6 +3567,7 @@
     void refreshNebulaAccountSettingsUI();
     void refreshAboutSection();
     void refreshTranslationKeyStatus();
+    void refreshAiKeyStatus();
     queueMicrotask(() => document.getElementById("settings-adblock-enabled")?.focus());
   }
 
@@ -2940,13 +3591,23 @@
     } else {
       appSettings = normalizeAppSettings({ ...appSettings, ...patch });
     }
+    const nextProfileId = appSettings.activeProfileId || "default";
+    if (prevProfileId !== nextProfileId) {
+      resetAiConversationsForProfileChange();
+      if (aiDrawerIsOpen()) ensureAiConversationsOnDrawerOpen();
+    }
     syncYoutubeAdSkipAdblockState();
     applyShellAppearance();
     syncChromeLayoutFromSettings();
     renderBookmarksBar();
+    if (aiDrawerIsOpen()) {
+      syncAiProviderAndModelFromSettings();
+      void refreshAiDrawerHint();
+    }
     closeSettingsPanel();
     refreshOmniboxSuggestions();
     void refreshTranslationKeyStatus();
+    void refreshAiKeyStatus();
     const profileChanged = prevProfileId !== (appSettings.activeProfileId || "default");
     const nextForceDark = appSettings.forceDarkMode === true;
     if (profileChanged && typeof window.nebula?.relaunchApp === "function") {
@@ -3687,6 +4348,7 @@
     if (historyPanel && !historyPanel.hidden) return true;
     if (sitePermPanel && !sitePermPanel.hidden) return true;
     if (translatePanel && !translatePanel.hidden) return true;
+    if (aiDrawer && !aiDrawer.hidden) return true;
     if (!findBar.hidden && (ae === findInput || ae?.closest?.("#find-bar"))) return true;
     if (tabGroupRenamePanel && !tabGroupRenamePanel.hidden) return true;
     if (tabCtxMenu && !tabCtxMenu.hidden) return true;
@@ -3704,6 +4366,7 @@
     if (historyPanel && !historyPanel.hidden) return true;
     if (sitePermPanel && !sitePermPanel.hidden) return true;
     if (translatePanel && !translatePanel.hidden) return true;
+    if (aiDrawer && !aiDrawer.hidden) return true;
     if (ae === urlInput || ae?.closest?.(".omnibox-wrap")) return true;
     if (!findBar.hidden) {
       if (ae === findInput || ae?.closest?.("#find-bar")) return true;
@@ -4084,6 +4747,7 @@
     if (sitePermPanel && !sitePermPanel.hidden) closeSitePermissionsPanel();
     hideOmniboxSuggestions();
     closeTranslatePanel();
+    closeAiDrawer();
     findBar.hidden = false;
     findInput.focus();
     findInput.select();
@@ -4488,6 +5152,7 @@
     btnTranslate.setAttribute("aria-expanded", open ? "true" : "false");
     if (!open && wasOpen) scheduleRestoreGuestFocus();
     if (open) {
+      closeAiDrawer();
       ensureTranslateLangSelect();
       const hint = document.getElementById("translate-panel-hint");
       if (hint) {
@@ -5077,8 +5742,183 @@
       scheduleSessionVaultOfferCheck(id);
     });
 
-    selectTab(id);
+    if (!(opts && opts.background)) {
+      selectTab(id);
+    }
     return entry;
+  }
+
+  const AI_TAB_AGENT_TEXT_MAX = 12000;
+  const AI_TAB_AGENT_LOAD_TIMEOUT_MS = 42000;
+  const AI_TAB_AGENT_SETTLE_MS = 500;
+
+  function isPrivateOrLocalHostnameForAiTab(hostname) {
+    const h = String(hostname || "")
+      .toLowerCase()
+      .trim();
+    if (!h) return true;
+    if (h === "localhost" || h.endsWith(".localhost")) return true;
+    if (h === "0.0.0.0" || h === "::" || h === "[::]" || h === "[::1]" || h === "::1") return true;
+    const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(h);
+    if (m) {
+      const a = Number(m[1]);
+      const b = Number(m[2]);
+      const c = Number(m[3]);
+      const d = Number(m[4]);
+      if ([a, b, c, d].some((x) => x > 255)) return true;
+      if (a === 0 || a === 127) return true;
+      if (a === 10) return true;
+      if (a === 192 && b === 168) return true;
+      if (a === 169 && b === 254) return true;
+      if (a === 172 && b >= 16 && b <= 31) return true;
+      if (a === 100 && b >= 64 && b <= 127) return true;
+      if (a === 198 && (b === 18 || b === 19)) return true;
+      if (a === 198 && b >= 51 && b <= 55) return true;
+      if (a >= 224 && a <= 239) return true;
+    }
+    if (h.includes(":")) {
+      const hc = h.replace(/^\[|\]$/g, "");
+      if (hc === "::1") return true;
+      const low = hc.toLowerCase();
+      if (low.startsWith("fe80:") || low.startsWith("fc") || low.startsWith("fd")) return true;
+    }
+    return false;
+  }
+
+  function validateAiTabAgentUrl(raw) {
+    const s = String(raw || "").trim().slice(0, 2048);
+    if (!s) return { ok: false, error: "(Empty URL.)" };
+    let u;
+    try {
+      u = new URL(s);
+    } catch {
+      return { ok: false, error: "(Invalid URL.)" };
+    }
+    if (u.username || u.password) return { ok: false, error: "(URLs with credentials are not allowed.)" };
+    const proto = u.protocol.toLowerCase();
+    if (proto !== "http:" && proto !== "https:") return { ok: false, error: "(Only http and https URLs are allowed.)" };
+    if (isPrivateOrLocalHostnameForAiTab(u.hostname)) return { ok: false, error: "(That host or IP is not allowed.)" };
+    return { ok: true, url: u.href };
+  }
+
+  function guestWebContentsIdForAiTabSyncDialog() {
+    const w = getActiveWebview();
+    if (!w || typeof w.getWebContentsId !== "function") return 0;
+    try {
+      return w.getWebContentsId() || 0;
+    } catch {
+      return 0;
+    }
+  }
+
+  function waitWebviewLoadOnce(wv, timeoutMs) {
+    return new Promise((resolve) => {
+      let settled = false;
+      const finish = (success, err) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        try {
+          wv.removeEventListener("did-finish-load", onOk);
+        } catch {
+          /* */
+        }
+        try {
+          wv.removeEventListener("did-fail-load", onFail);
+        } catch {
+          /* */
+        }
+        resolve({ ok: success, error: err || "" });
+      };
+      const onOk = () => finish(true, "");
+      const onFail = (e) => {
+        const desc = typeof e?.errorDescription === "string" ? e.errorDescription : "Load failed.";
+        finish(false, desc);
+      };
+      const timer = setTimeout(() => finish(false, "Navigation timed out."), timeoutMs);
+      wv.addEventListener("did-finish-load", onOk, { once: true });
+      wv.addEventListener("did-fail-load", onFail, { once: true });
+    });
+  }
+
+  async function waitAfterLoadSettle(wv) {
+    const r = await waitWebviewLoadOnce(wv, AI_TAB_AGENT_LOAD_TIMEOUT_MS);
+    await new Promise((res) => {
+      queueMicrotask(() => setTimeout(res, AI_TAB_AGENT_SETTLE_MS));
+    });
+    return r;
+  }
+
+  async function extractPlainTextFromGuestWebview(wv) {
+    if (!wv || typeof wv.executeJavaScript !== "function") return "";
+    const cap = AI_TAB_AGENT_TEXT_MAX;
+    const expr = `(function(){try{var t=(document.body&&document.body.innerText)?document.body.innerText:(document.documentElement&&document.documentElement.innerText)?document.documentElement.innerText:"";return String(t||"").slice(0,${cap});}catch(_e){return"";}})()`;
+    try {
+      const t = await wv.executeJavaScript(expr, false);
+      return typeof t === "string" ? t : String(t || "");
+    } catch {
+      return "";
+    }
+  }
+
+  async function handleAiTabToolMessage(msg) {
+    const op = typeof msg.op === "string" ? msg.op : "";
+    if (op === "open_browser_tab") {
+      const urlRaw = typeof msg.url === "string" ? msg.url : "";
+      const activate = msg.activate === true;
+      const wantConfirm = msg.confirmNavigation !== false;
+      const v = validateAiTabAgentUrl(urlRaw);
+      if (!v.ok) return { ok: false, error: v.error };
+      if (wantConfirm && typeof window.nebula?.syncDialog === "function") {
+        const ok = !!window.nebula.syncDialog({
+          kind: "confirm",
+          message: `The AI assistant wants to open this page in a new tab:\n\n${v.url}\n\nAllow navigation?`,
+          guestWebContentsId: guestWebContentsIdForAiTabSyncDialog(),
+        });
+        if (!ok) return { ok: false, error: "User declined opening this URL in a tab." };
+      }
+      const entry = createTab(v.url, { private: false, background: !activate });
+      const wv = entry.el;
+      const loadRes = await waitAfterLoadSettle(wv);
+      if (!loadRes.ok) {
+        return { ok: false, error: loadRes.error || "Failed to load page.", tabId: entry.id };
+      }
+      let pageUrl = "";
+      let title = "";
+      try {
+        pageUrl = wv.getURL() || "";
+        title = wv.getTitle() || entry.titleEl.textContent || "";
+      } catch {
+        title = entry.titleEl.textContent || "";
+      }
+      const text = await extractPlainTextFromGuestWebview(wv);
+      if (activate) selectTab(entry.id);
+      return { ok: true, tabId: entry.id, url: pageUrl, title, text };
+    }
+    if (op === "read_browser_tab_text") {
+      const rawTabId = typeof msg.tab_id === "string" ? msg.tab_id.trim() : "";
+      const tid = rawTabId || activeId;
+      const tab = tabs.find((x) => x.id === tid);
+      if (!tab || !tab.el) return { ok: false, error: "Tab not found or has no webview." };
+      let pageUrl = "";
+      try {
+        pageUrl = tab.el.getURL() || "";
+      } catch {
+        pageUrl = "";
+      }
+      if (!isHttpLikePageUrl(pageUrl) || isWelcomePageUrl(pageUrl)) {
+        return { ok: false, error: "That tab is not a readable http(s) page (e.g. new tab or non-web URL)." };
+      }
+      let title = "";
+      try {
+        title = tab.el.getTitle() || tab.titleEl.textContent || "";
+      } catch {
+        title = tab.titleEl.textContent || "";
+      }
+      const text = await extractPlainTextFromGuestWebview(tab.el);
+      return { ok: true, tabId: tab.id, url: pageUrl, title, text };
+    }
+    return { ok: false, error: "Unknown tab tool operation." };
   }
 
   async function addSessionVaultPlaceholderFromMenu() {
@@ -5294,6 +6134,86 @@
     e.stopPropagation();
     toggleTranslatePanel();
   });
+  btnAi?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    toggleAiDrawer();
+  });
+  aiDrawerClose?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    closeAiDrawer();
+  });
+  aiProvider?.addEventListener("change", () => {
+    const v =
+      aiProvider.value === "anthropic" ? "anthropic" : aiProvider.value === "google" ? "google" : "openai";
+    void persistAiAssistantPatch({ activeProvider: v });
+  });
+  aiModel?.addEventListener("change", () => {
+    const provider =
+      aiProvider.value === "anthropic" ? "anthropic" : aiProvider.value === "google" ? "google" : "openai";
+    const model = String(aiModel.value || "").trim();
+    if (!model) return;
+    void persistAiAssistantPatch({ modelByProvider: { [provider]: model } });
+  });
+  aiConversationSelect?.addEventListener("change", () => {
+    const id = String(aiConversationSelect.value || "").trim();
+    if (!id || id === activeAiConversationId) return;
+    openAiConversationById(id);
+  });
+  aiConvNewBtn?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    startNewAiConversation();
+  });
+  aiConvSaveBtn?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    persistCurrentAiConversation();
+  });
+  aiConvDeleteBtn?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    deleteActiveAiConversation();
+  });
+  aiSendBtn?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    void aiSendUserMessage();
+  });
+  aiClearBtn?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    removeAiStreamBubble();
+    setAiThinkingVisible(false);
+    aiChatMessages = [];
+    renderAiMessageBubbles();
+    persistCurrentAiConversation();
+  });
+  aiAddModelBtn?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    void (async () => {
+      const id = String(aiAddModelInput?.value || "").trim().slice(0, 128);
+      if (!id) {
+        alert("Enter a model id first.");
+        return;
+      }
+      const provider =
+        aiProvider.value === "anthropic" ? "anthropic" : aiProvider.value === "google" ? "google" : "openai";
+      const base = appSettings.aiAssistant && typeof appSettings.aiAssistant === "object" ? appSettings.aiAssistant : DEFAULT_AI_ASSISTANT_APP;
+      const cur = [...(base.customModelsByProvider?.[provider] || [])];
+      if (cur.includes(id)) {
+        alert("That model id is already in your list.");
+        return;
+      }
+      if (cur.length >= 24) {
+        alert("You can add at most 24 custom model ids per provider.");
+        return;
+      }
+      cur.push(id);
+      await persistAiAssistantPatch({ customModelsByProvider: { [provider]: cur } });
+      if (aiAddModelInput) aiAddModelInput.value = "";
+    })();
+  });
+  aiInput?.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter") return;
+    if (e.shiftKey) return;
+    e.preventDefault();
+    void aiSendUserMessage();
+  });
   translatePanelGo?.addEventListener("click", (e) => {
     e.stopPropagation();
     runTranslateForActiveTab();
@@ -5309,6 +6229,17 @@
       const t = e.target;
       if (translateDropdownWrap && translateDropdownWrap.contains(t)) return;
       closeTranslatePanel();
+    },
+    true
+  );
+  document.addEventListener(
+    "mousedown",
+    (e) => {
+      if (!aiDrawerIsOpen()) return;
+      const t = e.target;
+      if (aiToolbarWrap && aiToolbarWrap.contains(t)) return;
+      if (aiDrawer && aiDrawer.contains(t)) return;
+      closeAiDrawer();
     },
     true
   );
@@ -5390,8 +6321,9 @@
     if (profiles.length === (appSettings.profiles || []).length) return;
     if (!window.confirm(`Remove browsing profile “${rid}” from the list? Its data folder stays on disk until you delete it manually from Nebula’s userData Partitions.`)) return;
     void (async () => {
+      const wasActiveRemoved = (appSettings.activeProfileId || "default") === rid;
       const patch = { profiles };
-      if ((appSettings.activeProfileId || "default") === rid) patch.activeProfileId = "default";
+      if (wasActiveRemoved) patch.activeProfileId = "default";
       if (window.nebula?.setSettings) {
         try {
           const next = await window.nebula.setSettings(patch);
@@ -5401,6 +6333,10 @@
         }
       } else {
         appSettings = normalizeAppSettings({ ...appSettings, ...patch });
+      }
+      if (wasActiveRemoved) {
+        resetAiConversationsForProfileChange();
+        if (aiDrawerIsOpen()) ensureAiConversationsOnDrawerOpen();
       }
       populateSettingsForm();
     })();
@@ -5427,6 +6363,68 @@
     if (!confirm("Remove the translation API key from the vault?")) return;
     const r = await window.nebula?.translationSaveKey?.({ apiKey: "", provider: "libre" });
     if (r?.ok) void refreshTranslationKeyStatus();
+  });
+
+  async function settingsAiSaveKey(provider) {
+    const ids = {
+      openai: "settings-ai-key-openai",
+      anthropic: "settings-ai-key-anthropic",
+      google: "settings-ai-key-google",
+      "brave-search": "settings-ai-key-brave-search",
+    };
+    const keyEl = document.getElementById(ids[provider] || "settings-ai-key-openai");
+    const key = keyEl?.value?.trim() || "";
+    if (!key) {
+      alert("Paste an API key first.");
+      return;
+    }
+    const r = await window.nebula?.aiSaveKey?.({ apiKey: key, provider });
+    if (r?.locked) {
+      alert("Unlock Saved passwords first.");
+      return;
+    }
+    if (r?.ok) {
+      if (keyEl) keyEl.value = "";
+      void refreshAiKeyStatus();
+      if (aiDrawerIsOpen()) void refreshAiDrawerHint();
+    }
+  }
+
+  document.getElementById("settings-ai-save-openai")?.addEventListener("click", () => void settingsAiSaveKey("openai"));
+  document.getElementById("settings-ai-save-anthropic")?.addEventListener("click", () => void settingsAiSaveKey("anthropic"));
+  document.getElementById("settings-ai-save-google")?.addEventListener("click", () => void settingsAiSaveKey("google"));
+  document.getElementById("settings-ai-save-brave-search")?.addEventListener("click", () => void settingsAiSaveKey("brave-search"));
+  document.getElementById("settings-ai-clear-openai")?.addEventListener("click", async () => {
+    if (!confirm("Remove the OpenAI API key from the vault?")) return;
+    const r = await window.nebula?.aiSaveKey?.({ apiKey: "", provider: "openai" });
+    if (r?.ok) {
+      void refreshAiKeyStatus();
+      if (aiDrawerIsOpen()) void refreshAiDrawerHint();
+    }
+  });
+  document.getElementById("settings-ai-clear-anthropic")?.addEventListener("click", async () => {
+    if (!confirm("Remove the Anthropic API key from the vault?")) return;
+    const r = await window.nebula?.aiSaveKey?.({ apiKey: "", provider: "anthropic" });
+    if (r?.ok) {
+      void refreshAiKeyStatus();
+      if (aiDrawerIsOpen()) void refreshAiDrawerHint();
+    }
+  });
+  document.getElementById("settings-ai-clear-google")?.addEventListener("click", async () => {
+    if (!confirm("Remove the Gemini API key from the vault?")) return;
+    const r = await window.nebula?.aiSaveKey?.({ apiKey: "", provider: "google" });
+    if (r?.ok) {
+      void refreshAiKeyStatus();
+      if (aiDrawerIsOpen()) void refreshAiDrawerHint();
+    }
+  });
+  document.getElementById("settings-ai-clear-brave-search")?.addEventListener("click", async () => {
+    if (!confirm("Remove the Brave Search API key from the vault?")) return;
+    const r = await window.nebula?.aiSaveKey?.({ apiKey: "", provider: "brave-search" });
+    if (r?.ok) {
+      void refreshAiKeyStatus();
+      if (aiDrawerIsOpen()) void refreshAiDrawerHint();
+    }
   });
 
   settingsBookmarksImportMerge?.addEventListener("click", () => void runBookmarkImport(false));
@@ -5752,6 +6750,13 @@
         if (e.key === "Escape") {
           e.preventDefault();
           closeTranslatePanel();
+          return;
+        }
+      }
+      if (aiDrawer && !aiDrawer.hidden) {
+        if (e.key === "Escape") {
+          e.preventDefault();
+          closeAiDrawer();
           return;
         }
       }
