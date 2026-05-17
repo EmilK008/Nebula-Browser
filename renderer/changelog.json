@@ -1,6 +1,14 @@
 {
   "entries": [
     {
+      "version": "1.0.0",
+      "date": "2026-05-17",
+      "added": [
+        "First-run onboarding on a truly new install (no existing `nebula-settings.json`): pick window chrome theme (dark, light, or match the OS), optionally import bookmarks from Chrome, Edge, or Firefox on this PC, optionally create a local Nebula account for the vault, then continue. A `firstRunOnboardingDone` setting keeps upgrades and existing profiles from seeing the wizard again.",
+        "Bookmark import from Microsoft Edge (Chromium-style `Bookmarks` + profile resolution) and Mozilla Firefox (default profile from `profiles.ini`, temp copy of `places.sqlite`, flat http(s) bookmarks). Settings → Bookmarks and the onboarding step both offer Chrome, Edge, Firefox, or a bookmark file."
+      ]
+    },
+    {
       "version": "0.10.2",
       "date": "2026-05-17",
       "improvements": [

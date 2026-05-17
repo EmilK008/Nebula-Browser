@@ -337,6 +337,29 @@
   const sessionRestoreYes = document.getElementById("session-restore-yes");
   const sessionRestoreNo = document.getElementById("session-restore-no");
   const sessionRestoreDesc = document.getElementById("session-restore-desc");
+  const firstRunPanel = document.getElementById("first-run-panel");
+  const firstRunBackdrop = document.getElementById("first-run-backdrop");
+  const firstRunStepLabel = document.getElementById("first-run-step-label");
+  const firstRunStep1 = document.getElementById("first-run-step-1");
+  const firstRunStep2 = document.getElementById("first-run-step-2");
+  const firstRunStep3 = document.getElementById("first-run-step-3");
+  const firstRunMsg = document.getElementById("first-run-msg");
+  const firstRunAccountForm = document.getElementById("first-run-account-form");
+  const firstRunAccountSkipHint = document.getElementById("first-run-account-skip-hint");
+  const firstRunSkipAll = document.getElementById("first-run-skip-all");
+  const firstRunStep1Next = document.getElementById("first-run-step1-next");
+  const firstRunStep2Back = document.getElementById("first-run-step2-back");
+  const firstRunStep2Next = document.getElementById("first-run-step2-next");
+  const firstRunStep2Skip = document.getElementById("first-run-step2-skip");
+  const firstRunImportChrome = document.getElementById("first-run-import-chrome");
+  const firstRunImportEdge = document.getElementById("first-run-import-edge");
+  const firstRunImportFirefox = document.getElementById("first-run-import-firefox");
+  const firstRunStep3Back = document.getElementById("first-run-step3-back");
+  const firstRunStep3Next = document.getElementById("first-run-step3-next");
+  const firstRunStep3Skip = document.getElementById("first-run-step3-skip");
+  const firstRunAccountPass = document.getElementById("first-run-account-pass");
+  const firstRunAccountPass2 = document.getElementById("first-run-account-pass2");
+  const firstRunAccountCreate = document.getElementById("first-run-account-create");
   const sitePermPanel = document.getElementById("site-perm-panel");
   const sitePermBackdrop = document.getElementById("site-perm-backdrop");
   const sitePermClose = document.getElementById("site-perm-close");
@@ -583,6 +606,8 @@
       nebulaVpnEnabled: false,
       lastDownloadChoice: "ask",
     },
+    /** Omitted in saved files before 1.0; main defaults to `true` so upgrades skip onboarding. */
+    firstRunOnboardingDone: true,
   };
 
   /** Official download pages only; `fixedProxyRules` only if accurate (otherwise Nebula uses system proxy when routing is on). */
@@ -793,6 +818,8 @@
       aiAssistant: normalizeAppAiAssistant(o.aiAssistant),
       network: normalizeAppNetwork(o.network),
       vpnHelper: normalizeAppVpnHelper(o.vpnHelper),
+      firstRunOnboardingDone:
+        typeof o.firstRunOnboardingDone === "boolean" ? o.firstRunOnboardingDone : DEFAULT_APP_SETTINGS.firstRunOnboardingDone,
     };
     const ss = merged.searchSuggestions;
     const layers = ["past", "local", "remote"];
@@ -4041,6 +4068,40 @@
     return { added, skipped, total: safe.length };
   }
 
+  async function readBookmarkListForImportSource(source) {
+    const nebula = window.nebula;
+    const io = window.NebulaBookmarksIO;
+    if (!io) return { ok: false, error: "Bookmark import helper not loaded." };
+    if (source === "file") {
+      if (!nebula?.readBookmarkImportFile) return { ok: false, error: "Bookmark import is only available in the Nebula app." };
+      const r = await nebula.readBookmarkImportFile();
+      if (!r || r.canceled) return { ok: false, canceled: true };
+      if (!r.ok) return { ok: false, error: r.error ? `Could not read file: ${r.error}` : "Could not read file." };
+      try {
+        return { ok: true, list: io.parseBookmarkFile(r.content) };
+      } catch {
+        return { ok: false, error: "Could not parse bookmarks from file." };
+      }
+    }
+    if (source === "chrome" || source === "edge" || source === "firefox") {
+      if (!nebula?.readBrowserBookmarks) return { ok: false, error: "Browser import is only available in the Nebula app." };
+      const r = await nebula.readBrowserBookmarks(source);
+      if (!r || !r.ok) return { ok: false, error: r?.error || "Could not read browser bookmarks." };
+      if (Array.isArray(r.bookmarks)) {
+        return { ok: true, list: io.parseFlatBookmarkList(r.bookmarks) };
+      }
+      if (typeof r.content === "string") {
+        try {
+          return { ok: true, list: io.parseBookmarkFile(r.content) };
+        } catch {
+          return { ok: false, error: "Could not parse bookmarks from browser export." };
+        }
+      }
+      return { ok: false, error: "Unexpected response from browser bookmark reader." };
+    }
+    return { ok: false, error: "Unknown import source." };
+  }
+
   async function runBookmarkImport(replace) {
     const nebula = window.nebula;
     const io = window.NebulaBookmarksIO;
@@ -4050,44 +4111,26 @@
     }
     const source = settingsBookmarksImportSource?.value || "chrome";
 
-    /** @type {{ ok?: boolean, canceled?: boolean, content?: string, error?: string }} */
-    let r;
-    if (source === "chrome") {
-      if (!nebula?.readBrowserBookmarks) {
-        alert("Browser import is only available in the Nebula app.");
-        return;
-      }
-      r = await nebula.readBrowserBookmarks("chrome");
-      if (!r || !r.ok) {
-        const extra = r?.path ? `\n\n${r.path}` : "";
-        alert((r?.error || "Could not read Chrome bookmarks.") + extra);
-        return;
-      }
-    } else {
-      if (!nebula?.readBookmarkImportFile) {
-        alert("Bookmark import is only available in the Nebula app.");
-        return;
-      }
-      r = await nebula.readBookmarkImportFile();
-      if (!r || r.canceled) return;
-      if (!r.ok) {
-        alert(r.error ? `Could not read file: ${r.error}` : "Could not read file.");
-        return;
-      }
-    }
-
-    let list;
-    try {
-      list = io.parseBookmarkFile(r.content);
-    } catch {
-      alert("Could not parse bookmarks. For Chrome, use the profile Bookmarks file or export HTML from Chrome.");
+    const read = await readBookmarkListForImportSource(source);
+    if (read.canceled) return;
+    if (!read.ok || !read.list) {
+      alert(read.error || "Could not import bookmarks.");
       return;
     }
+    const list = read.list;
+
     if (list.length === 0) {
       alert("No bookmarks found.");
       return;
     }
-    const sourceLabel = source === "chrome" ? "Chrome" : "the selected file";
+    const sourceLabel =
+      source === "chrome"
+        ? "Chrome"
+        : source === "edge"
+          ? "Edge"
+          : source === "firefox"
+            ? "Firefox"
+            : "the selected file";
     if (replace) {
       const nExisting = bookmarks.length;
       if (
@@ -7372,9 +7415,211 @@
   syncYoutubeAdSkipAdblockState();
   applyShellAppearance();
   syncChromeLayoutFromSettings();
-  void loadAppSettings().then(() => {
+  async function applyFirstRunSettingsPatch(patch) {
+    if (!window.nebula?.setSettings) return;
+    try {
+      const next = await window.nebula.setSettings(patch);
+      if (next && typeof next === "object") appSettings = normalizeAppSettings(next);
+      applyShellAppearance();
+      syncChromeLayoutFromSettings();
+    } catch {
+      /* */
+    }
+  }
+
+  async function runFirstRunOnboardingFlow() {
+    if (!firstRunPanel || appSettings.firstRunOnboardingDone !== false) return;
+
+    let shellTheme = appSettings.shellTheme || "dark";
+    const showStep = (n) => {
+      if (firstRunStepLabel) firstRunStepLabel.textContent = `Step ${n} of 3`;
+      if (firstRunStep1) firstRunStep1.hidden = n !== 1;
+      if (firstRunStep2) firstRunStep2.hidden = n !== 2;
+      if (firstRunStep3) firstRunStep3.hidden = n !== 3;
+      if (firstRunMsg) {
+        firstRunMsg.textContent = "";
+        firstRunMsg.hidden = true;
+      }
+    };
+    const closePanel = () => {
+      firstRunPanel.hidden = true;
+      firstRunPanel.setAttribute("aria-hidden", "true");
+    };
+    const openPanel = () => {
+      firstRunPanel.hidden = false;
+      firstRunPanel.setAttribute("aria-hidden", "false");
+    };
+
+    const waitFirstRunChoice = (targets) => {
+      return new Promise((resolve) => {
+        const cleanups = [];
+        const done = (value) => {
+          for (const c of cleanups) {
+            try {
+              c();
+            } catch {
+              /* */
+            }
+          }
+          resolve(value);
+        };
+        let armed = 0;
+        for (const { el, value } of targets) {
+          if (!el) continue;
+          armed++;
+          const fn = () => done(value);
+          el.addEventListener("click", fn);
+          cleanups.push(() => el.removeEventListener("click", fn));
+        }
+        if (armed === 0) done(undefined);
+      });
+    };
+
+    openPanel();
+
+    while (appSettings.firstRunOnboardingDone === false) {
+      showStep(1);
+      for (const el of document.querySelectorAll('input[name="first-run-theme"]')) {
+        if (el instanceof HTMLInputElement) el.checked = el.value === shellTheme;
+      }
+      const s1 = await waitFirstRunChoice([
+        { el: firstRunStep1Next, value: "next" },
+        { el: firstRunSkipAll, value: "skip" },
+        { el: firstRunBackdrop, value: "skip" },
+      ]);
+      if (s1 === "skip" || s1 === undefined) {
+        await applyFirstRunSettingsPatch({ shellTheme, firstRunOnboardingDone: true });
+        closePanel();
+        return;
+      }
+      const picked = document.querySelector('input[name="first-run-theme"]:checked');
+      shellTheme =
+        picked && picked instanceof HTMLInputElement && typeof picked.value === "string" ? picked.value : "dark";
+      await applyFirstRunSettingsPatch({ shellTheme });
+
+      showStep(2);
+      const tryImport = async (src) => {
+        const read = await readBookmarkListForImportSource(src);
+        if (read.canceled) return;
+        if (!read.ok || !read.list) {
+          if (firstRunMsg) {
+            firstRunMsg.textContent = read.error || "Could not import.";
+            firstRunMsg.hidden = false;
+          }
+          return;
+        }
+        if (read.list.length === 0) {
+          if (firstRunMsg) {
+            firstRunMsg.textContent = "No bookmarks found for that browser.";
+            firstRunMsg.hidden = false;
+          }
+          return;
+        }
+        const { added, skipped } = mergeImportedBookmarks(read.list);
+        saveBookmarksToStorage();
+        renderBookmarksBar();
+        updateBookmarkStar();
+        if (firstRunMsg) {
+          firstRunMsg.textContent = `Imported ${added} bookmark(s). Skipped ${skipped} duplicate(s).`;
+          firstRunMsg.hidden = false;
+        }
+      };
+      const onImpChrome = () => void tryImport("chrome");
+      const onImpEdge = () => void tryImport("edge");
+      const onImpFx = () => void tryImport("firefox");
+      firstRunImportChrome?.addEventListener("click", onImpChrome);
+      firstRunImportEdge?.addEventListener("click", onImpEdge);
+      firstRunImportFirefox?.addEventListener("click", onImpFx);
+      const s2 = await waitFirstRunChoice([
+        { el: firstRunStep2Next, value: "next" },
+        { el: firstRunStep2Skip, value: "next" },
+        { el: firstRunStep2Back, value: "back" },
+      ]);
+      firstRunImportChrome?.removeEventListener("click", onImpChrome);
+      firstRunImportEdge?.removeEventListener("click", onImpEdge);
+      firstRunImportFirefox?.removeEventListener("click", onImpFx);
+      if (s2 === "back" || s2 === undefined) continue;
+
+      showStep(3);
+      const st = (await window.nebula?.accountStatus?.()) || {};
+      const hasAcct = !!st.hasAccount;
+      const minLen = typeof st.minPasswordLength === "number" ? st.minPasswordLength : 8;
+      if (firstRunAccountForm) firstRunAccountForm.hidden = hasAcct;
+      if (firstRunAccountSkipHint) firstRunAccountSkipHint.hidden = !hasAcct;
+      if (firstRunAccountPass) firstRunAccountPass.value = "";
+      if (firstRunAccountPass2) firstRunAccountPass2.value = "";
+
+      const finish = async () => {
+        await applyFirstRunSettingsPatch({ shellTheme, firstRunOnboardingDone: true });
+        closePanel();
+      };
+
+      const s3 = await new Promise((resolve) => {
+        const cleanups = [];
+        const arm = (el, fn) => {
+          if (!el) return;
+          const wrap = () => fn();
+          el.addEventListener("click", wrap);
+          cleanups.push(() => el.removeEventListener("click", wrap));
+        };
+        arm(firstRunStep3Back, () => {
+          for (const c of cleanups) c();
+          resolve("back");
+        });
+        arm(firstRunStep3Skip, () => {
+          for (const c of cleanups) c();
+          void finish().then(() => resolve("done"));
+        });
+        arm(firstRunStep3Next, () => {
+          for (const c of cleanups) c();
+          void finish().then(() => resolve("done"));
+        });
+        if (!hasAcct && firstRunAccountCreate) {
+          const onCreate = async () => {
+            const a = firstRunAccountPass?.value || "";
+            const b = firstRunAccountPass2?.value || "";
+            if (a.length < minLen) {
+              if (firstRunMsg) {
+                firstRunMsg.textContent = `Password must be at least ${minLen} characters.`;
+                firstRunMsg.hidden = false;
+              }
+              return;
+            }
+            if (a !== b) {
+              if (firstRunMsg) {
+                firstRunMsg.textContent = "Passwords do not match.";
+                firstRunMsg.hidden = false;
+              }
+              return;
+            }
+            const r = await window.nebula?.accountCreate?.({ password: a });
+            if (!r?.ok) {
+              if (firstRunMsg) {
+                firstRunMsg.textContent =
+                  r?.error === "exists" ? "Account already exists." : "Could not create account.";
+                firstRunMsg.hidden = false;
+              }
+              return;
+            }
+            for (const c of cleanups) c();
+            void finish().then(() => resolve("done"));
+          };
+          firstRunAccountCreate.addEventListener("click", onCreate);
+          cleanups.push(() => firstRunAccountCreate.removeEventListener("click", onCreate));
+        }
+      });
+
+      if (s3 === "back" || s3 === undefined) continue;
+      return;
+    }
+  }
+
+  void loadAppSettings().then(async () => {
     bookmarks = loadBookmarksFromStorage();
     renderBookmarksBar();
+    if (appSettings.firstRunOnboardingDone === false) {
+      await runFirstRunOnboardingFlow();
+    }
     tryOfferSessionRestoreOnLaunch();
     setNavButtons();
     updateLoadingUI();

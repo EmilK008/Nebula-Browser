@@ -72,6 +72,31 @@
   }
 
   /**
+   * Flat list from main-process Firefox `places.sqlite` import (http/https only).
+   * @param {unknown} raw
+   * @returns {{ url: string, title: string }[]}
+   */
+  function parseFlatBookmarkList(raw) {
+    var out = [];
+    if (!Array.isArray(raw)) return out;
+    for (var i = 0; i < raw.length; i++) {
+      var row = raw[i];
+      if (!row || typeof row !== "object") continue;
+      var url = typeof row.url === "string" ? row.url.trim() : "";
+      if (!url) continue;
+      try {
+        var u = new URL(url);
+        if (u.protocol !== "http:" && u.protocol !== "https:") continue;
+      } catch (e) {
+        continue;
+      }
+      var title = typeof row.title === "string" ? row.title.trim() : "";
+      out.push({ url: url, title: title || url });
+    }
+    return out;
+  }
+
+  /**
    * @param {{ url: string, title: string }[]} bookmarks
    */
   function exportNetscapeHtml(bookmarks) {
@@ -100,6 +125,7 @@
 
   window.NebulaBookmarksIO = {
     parseBookmarkFile: parseBookmarkFile,
+    parseFlatBookmarkList: parseFlatBookmarkList,
     exportNetscapeHtml: exportNetscapeHtml,
     exportNebulaJson: exportNebulaJson,
   };

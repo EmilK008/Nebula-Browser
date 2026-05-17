@@ -1033,11 +1033,44 @@ function chromeUserDataRoot() {
   return path.join(home, ".config", "google-chrome");
 }
 
+function edgeUserDataRoot() {
+  const home = os.homedir();
+  if (process.platform === "win32") {
+    const local = process.env.LOCALAPPDATA || path.join(home, "AppData", "Local");
+    return path.join(local, "Microsoft", "Edge", "User Data");
+  }
+  if (process.platform === "darwin") {
+    return path.join(home, "Library", "Application Support", "Microsoft Edge");
+  }
+  const candidates = [
+    path.join(home, ".config", "microsoft-edge"),
+    path.join(home, ".config", "microsoft-edge-stable"),
+    path.join(home, ".var", "app", "com.microsoft.Edge", "config", "microsoft-edge"),
+  ];
+  for (const c of candidates) {
+    if (fs.existsSync(c)) return c;
+  }
+  return candidates[0];
+}
+
+function firefoxProfilesRoot() {
+  const home = os.homedir();
+  if (process.platform === "win32") {
+    const roaming = process.env.APPDATA || path.join(home, "AppData", "Roaming");
+    return path.join(roaming, "Mozilla", "Firefox");
+  }
+  if (process.platform === "darwin") {
+    return path.join(home, "Library", "Application Support", "Firefox");
+  }
+  return path.join(home, ".mozilla", "firefox");
+}
+
 /**
- * Prefer Chrome's last-used profile (Local State), then Default, then any profile with Bookmarks.
+ * Chromium-family: prefer `Local State` last-used profile, then Default, then any profile with Bookmarks.
+ * @param {string} userDataRoot e.g. …/Chrome/User Data or …/Edge/User Data
  */
-function resolveChromeBookmarksPath() {
-  const root = chromeUserDataRoot();
+function resolveChromiumBookmarksFile(userDataRoot) {
+  const root = userDataRoot;
   const tried = [];
   const localStatePath = path.join(root, "Local State");
   if (fs.existsSync(localStatePath)) {
@@ -1074,28 +1107,186 @@ function resolveChromeBookmarksPath() {
   return { filePath: def, tried, root };
 }
 
-ipcMain.handle("nebula-read-browser-bookmarks", async (_e, payload) => {
-  const browser = payload && typeof payload === "object" ? payload.browser : "";
-  if (browser !== "chrome") {
-    return { ok: false, error: "This browser is not supported yet." };
+function resolveChromeBookmarksPath() {
+  return resolveChromiumBookmarksFile(chromeUserDataRoot());
+}
+
+function resolveEdgeBookmarksPath() {
+  return resolveChromiumBookmarksFile(edgeUserDataRoot());
+}
+
+/**
+ * @returns {{ profileDir: string | null, error?: string }}
+ */
+function resolveFirefoxDefaultProfileDir() {
+  const firefoxRoot = firefoxProfilesRoot();
+  const iniPath = path.join(firefoxRoot, "profiles.ini");
+  if (!fs.existsSync(iniPath)) {
+    return { profileDir: null, error: `Firefox profiles.ini not found under ${firefoxRoot}` };
   }
-  const { filePath, tried, root } = resolveChromeBookmarksPath();
-  if (!fs.existsSync(filePath)) {
-    return {
-      ok: false,
-      error:
-        "Could not find Chrome bookmarks. Install Google Chrome and open it once, or pick “Bookmark file” and choose an export.",
-      path: filePath,
-      profileRoot: root,
-      tried,
+  let text;
+  try {
+    text = fs.readFileSync(iniPath, "utf8");
+  } catch (e) {
+    return { profileDir: null, error: String(e?.message || e) };
+  }
+  /** @type {Record<string, Record<string, string>>} */
+  const sections = {};
+  let cur = "";
+  for (const line of text.split(/\r?\n/)) {
+    const sec = /^\s*\[([^\]]+)\]\s*$/.exec(line);
+    if (sec) {
+      cur = sec[1];
+      if (!sections[cur]) sections[cur] = {};
+      continue;
+    }
+    const kv = /^\s*([^=]+)=(.*)$/.exec(line);
+    if (!kv || !cur) continue;
+    sections[cur][kv[1].trim()] = kv[2].trim();
+  }
+  for (const name of Object.keys(sections)) {
+    if (name.startsWith("Install") && sections[name].Default) {
+      const p = sections[name].Default;
+      if (path.isAbsolute(p)) return { profileDir: p };
+      return { profileDir: path.join(firefoxRoot, p) };
+    }
+  }
+  for (const name of Object.keys(sections)) {
+    if (!name.startsWith("Profile")) continue;
+    const sec = sections[name];
+    if (sec.Default === "1" && sec.Path) {
+      if (sec.IsRelative === "0") return { profileDir: sec.Path };
+      return { profileDir: path.join(firefoxRoot, sec.Path) };
+    }
+  }
+  return { profileDir: null, error: "No default Firefox profile in profiles.ini" };
+}
+
+/**
+ * @param {string} sqlitePath copied temp file (read-only)
+ * @returns {{ url: string, title: string }[]}
+ */
+function readFirefoxBookmarksFromPlacesSqlite(sqlitePath) {
+  const sql = `SELECT p.url AS url,
+    COALESCE(NULLIF(b.title, ''), NULLIF(p.title, '')) AS title
+    FROM moz_bookmarks b
+    JOIN moz_places p ON p.id = b.fk
+    WHERE b.type = 1
+      AND p.url IS NOT NULL
+      AND p.url NOT LIKE 'place:%'
+      AND (p.hidden IS NULL OR p.hidden = 0)`;
+
+  /** @type {{ all: (q: string) => unknown[] }, close: () => void }} */
+  let api;
+  try {
+    const { DatabaseSync } = require("node:sqlite");
+    const db = new DatabaseSync(sqlitePath, { readOnly: true });
+    api = {
+      all: (q) => db.prepare(q).all(),
+      close: () => {
+        try {
+          db.close();
+        } catch {
+          /* */
+        }
+      },
     };
+  } catch {
+    try {
+      const Database = require("better-sqlite3");
+      const db = new Database(sqlitePath, { readonly: true, fileMustExist: true });
+      api = {
+        all: (q) => db.prepare(q).all(),
+        close: () => {
+          try {
+            db.close();
+          } catch {
+            /* */
+          }
+        },
+      };
+    } catch (e2) {
+      throw new Error(
+        `Firefox bookmark import needs SQLite (built-in node:sqlite or npm better-sqlite3). ${String(e2?.message || e2)}`
+      );
+    }
   }
   try {
-    const content = fs.readFileSync(filePath, "utf8");
-    return { ok: true, content, path: filePath };
-  } catch (err) {
-    return { ok: false, error: String(err?.message || err), path: filePath };
+    const rows = api.all(sql);
+    const out = [];
+    for (const row of rows) {
+      if (!row || typeof row !== "object") continue;
+      const url = typeof row.url === "string" ? row.url.trim() : "";
+      const title = typeof row.title === "string" ? row.title.trim() : "";
+      if (!url || url.startsWith("place:")) continue;
+      try {
+        const u = new URL(url);
+        if (u.protocol !== "http:" && u.protocol !== "https:") continue;
+      } catch {
+        continue;
+      }
+      out.push({ url, title: title || url });
+    }
+    return out;
+  } finally {
+    try {
+      api.close();
+    } catch {
+      /* */
+    }
   }
+}
+
+ipcMain.handle("nebula-read-browser-bookmarks", async (_e, payload) => {
+  const browser = payload && typeof payload === "object" ? String(payload.browser || "").trim().toLowerCase() : "";
+
+  if (browser === "chrome" || browser === "edge") {
+    const { filePath, tried, root } =
+      browser === "edge" ? resolveEdgeBookmarksPath() : resolveChromeBookmarksPath();
+    const label = browser === "edge" ? "Microsoft Edge" : "Google Chrome";
+    if (!fs.existsSync(filePath)) {
+      return {
+        ok: false,
+        error: `Could not find ${label} bookmarks. Install the browser and open it once, or use “Bookmark file” in Settings to import an export.`,
+        path: filePath,
+        profileRoot: root,
+        tried,
+      };
+    }
+    try {
+      const content = fs.readFileSync(filePath, "utf8");
+      return { ok: true, content, path: filePath };
+    } catch (err) {
+      return { ok: false, error: String(err?.message || err), path: filePath };
+    }
+  }
+
+  if (browser === "firefox") {
+    const { profileDir, error } = resolveFirefoxDefaultProfileDir();
+    if (!profileDir) {
+      return { ok: false, error: error || "Could not find Firefox profile." };
+    }
+    const places = path.join(profileDir, "places.sqlite");
+    if (!fs.existsSync(places)) {
+      return { ok: false, error: `places.sqlite not found in ${profileDir}` };
+    }
+    const tmp = path.join(app.getPath("userData"), `nebula-firefox-places-${Date.now()}-${Math.random().toString(36).slice(2)}.sqlite`);
+    try {
+      fs.copyFileSync(places, tmp);
+      const bookmarks = readFirefoxBookmarksFromPlacesSqlite(tmp);
+      return { ok: true, bookmarks, path: places };
+    } catch (err) {
+      return { ok: false, error: String(err?.message || err), path: places };
+    } finally {
+      try {
+        fs.unlinkSync(tmp);
+      } catch {
+        /* */
+      }
+    }
+  }
+
+  return { ok: false, error: "This browser is not supported yet." };
 });
 
 ipcMain.handle("nebula-read-bookmark-import-file", async (event) => {
@@ -1356,6 +1547,8 @@ const DEFAULT_SETTINGS = {
     /** `ask` | `nebula` | `external` — default for download link choice prompt. */
     lastDownloadChoice: "ask",
   },
+  /** First-launch onboarding; `true` when omitted so upgrades skip the wizard. Fresh installs force `false` in `loadSettings`. */
+  firstRunOnboardingDone: true,
 };
 
 /** Allowlisted ids for `nebula-vpn-helper-open-app` (must match renderer catalog). */
@@ -1472,6 +1665,7 @@ function normalizeSettings(s) {
     normalizeShellChromeSettings(o);
     normalizeNetworkSettings(o);
     normalizeVpnHelperSettings(o);
+    if (typeof o.firstRunOnboardingDone !== "boolean") o.firstRunOnboardingDone = DEFAULT_SETTINGS.firstRunOnboardingDone;
     return o;
   }
   const layers = ["past", "local", "remote"];
@@ -1506,6 +1700,7 @@ function normalizeSettings(s) {
   normalizeShellChromeSettings(o);
   normalizeNetworkSettings(o);
   normalizeVpnHelperSettings(o);
+  if (typeof o.firstRunOnboardingDone !== "boolean") o.firstRunOnboardingDone = DEFAULT_SETTINGS.firstRunOnboardingDone;
   return o;
 }
 
@@ -1580,7 +1775,9 @@ function loadSettings() {
     const parsed = JSON.parse(raw);
     return normalizeSettings(mergeDeep(DEFAULT_SETTINGS, parsed));
   } catch {
-    return normalizeSettings(clone(DEFAULT_SETTINGS));
+    const fresh = clone(DEFAULT_SETTINGS);
+    fresh.firstRunOnboardingDone = false;
+    return normalizeSettings(fresh);
   }
 }
 

@@ -341,6 +341,67 @@
           </div>
         </div>
       </div>
+      <div id="first-run-panel" class="first-run-panel" hidden aria-hidden="true">
+        <div class="first-run-backdrop" id="first-run-backdrop" aria-hidden="true"></div>
+        <div class="first-run-dialog" role="dialog" aria-modal="true" aria-labelledby="first-run-title">
+          <p class="first-run-step-label" id="first-run-step-label">Step 1 of 3</p>
+          <p id="first-run-msg" class="settings-hint first-run-msg" hidden></p>
+          <div id="first-run-step-1">
+            <h2 id="first-run-title" class="first-run-title">Welcome to Nebula</h2>
+            <p class="settings-hint">
+              Choose how Nebula’s own toolbar and panels look. This is <strong>window chrome</strong> only — “Force dark websites” stays under Settings → Appearance if you want it later.
+            </p>
+            <div class="first-run-theme-row" role="radiogroup" aria-label="Window chrome theme">
+              <label class="first-run-radio"><input type="radio" name="first-run-theme" value="dark" checked /> Dark</label>
+              <label class="first-run-radio"><input type="radio" name="first-run-theme" value="light" /> Light</label>
+              <label class="first-run-radio"><input type="radio" name="first-run-theme" value="system" /> Match OS</label>
+            </div>
+            <div class="first-run-actions">
+              <button type="button" class="settings-action-btn" id="first-run-skip-all">Skip to Nebula</button>
+              <button type="button" class="settings-save-btn" id="first-run-step1-next">Next</button>
+            </div>
+          </div>
+          <div id="first-run-step-2" hidden>
+            <h2 class="first-run-title">Import bookmarks</h2>
+            <p class="settings-hint">
+              Optional — bookmarks are merged into your bar (duplicates skipped). You can always import later under Settings → Bookmarks.
+            </p>
+            <div class="first-run-browser-row">
+              <button type="button" class="settings-action-btn" id="first-run-import-chrome">Chrome (this PC)</button>
+              <button type="button" class="settings-action-btn" id="first-run-import-edge">Edge (this PC)</button>
+              <button type="button" class="settings-action-btn" id="first-run-import-firefox">Firefox (this PC)</button>
+            </div>
+            <div class="first-run-actions">
+              <button type="button" class="settings-action-btn" id="first-run-step2-back">Back</button>
+              <button type="button" class="settings-action-btn" id="first-run-step2-skip">Skip import</button>
+              <button type="button" class="settings-save-btn" id="first-run-step2-next">Next</button>
+            </div>
+          </div>
+          <div id="first-run-step-3" hidden>
+            <h2 class="first-run-title">Nebula account (optional)</h2>
+            <p class="settings-hint">
+              A local password protects saved logins in the vault. You can create one now or skip and add it later under Settings.
+            </p>
+            <div id="first-run-account-form">
+              <label class="settings-field">
+                <span class="settings-label">Password</span>
+                <input type="password" id="first-run-account-pass" class="settings-input" autocomplete="new-password" />
+              </label>
+              <label class="settings-field">
+                <span class="settings-label">Confirm</span>
+                <input type="password" id="first-run-account-pass2" class="settings-input" autocomplete="new-password" />
+              </label>
+              <button type="button" class="settings-save-btn" id="first-run-account-create">Create account</button>
+            </div>
+            <p id="first-run-account-skip-hint" class="settings-hint" hidden>You already have a Nebula account on this profile.</p>
+            <div class="first-run-actions">
+              <button type="button" class="settings-action-btn" id="first-run-step3-back">Back</button>
+              <button type="button" class="settings-action-btn" id="first-run-step3-skip">Skip</button>
+              <button type="button" class="settings-save-btn" id="first-run-step3-next">Finish</button>
+            </div>
+          </div>
+        </div>
+      </div>
       <div id="changelog-panel" class="changelog-panel" hidden aria-hidden="true">
         <div class="changelog-panel-backdrop" id="changelog-panel-backdrop" aria-hidden="true"></div>
         <div
@@ -948,12 +1009,14 @@
             <section class="settings-section">
               <h3 class="settings-section-title">Bookmarks</h3>
               <p class="settings-hint">
-                Choose where to import from—Chrome is read automatically from this PC. Use “Bookmark file” for an HTML/JSON export or other browsers.
+                Choose where to import from — Chrome, Edge, and Firefox are read from this PC when installed. Use “Bookmark file” for an HTML/JSON export or other browsers.
               </p>
               <label class="settings-field">
                 <span class="settings-label">Import from</span>
                 <select id="settings-bookmarks-import-source" class="settings-select">
                   <option value="chrome">Google Chrome (this PC)</option>
+                  <option value="edge">Microsoft Edge (this PC)</option>
+                  <option value="firefox">Mozilla Firefox (this PC)</option>
                   <option value="file">Bookmark file (HTML or JSON)…</option>
                 </select>
               </label>

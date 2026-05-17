@@ -81,7 +81,10 @@ contextBridge.exposeInMainWorld("nebula", {
     return () => ipcRenderer.removeListener(channel, fn);
   },
   readBookmarkImportFile: () => ipcRenderer.invoke("nebula-read-bookmark-import-file"),
-  /** @param {"chrome"} browser */
+  /**
+   * Read bookmarks from another browser on this machine (Chromium JSON file, or Firefox places.sqlite).
+   * @param {"chrome"|"edge"|"firefox"} browser
+   */
   readBrowserBookmarks: (browser) => ipcRenderer.invoke("nebula-read-browser-bookmarks", { browser }),
   /**
    * @param {{ text: string, defaultPath?: string, format?: "html" | "json" }} payload
