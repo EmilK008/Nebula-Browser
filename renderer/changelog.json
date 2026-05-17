@@ -1,6 +1,20 @@
 {
   "entries": [
     {
+      "version": "0.9.3",
+      "date": "2026-05-08",
+      "added": [
+        "AI assistant: Summarize tab — a button in the assistant drawer reads the active tab as plain text (http/https pages only, same excerpt size cap as tab tools), then streams a concise summary using your selected provider and model. The home / welcome tab is excluded."
+      ]
+    },
+    {
+      "version": "0.9.2",
+      "date": "2026-05-08",
+      "improvements": [
+        "Windows NSIS in-app update: after the silent installer runs, Nebula tries to start again automatically (detached helper waits for the old process to exit, then launches the installed exe path). If it does not reopen, use the Start menu or the release page as before."
+      ]
+    },
+    {
       "version": "0.9.1",
       "date": "2026-05-08",
       "improvements": [

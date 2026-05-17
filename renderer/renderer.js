@@ -449,6 +449,7 @@
   const aiMessagesEl = document.getElementById("ai-messages");
   const aiInput = document.getElementById("ai-input");
   const aiSendBtn = document.getElementById("ai-send-btn");
+  const aiSummarizeTabBtn = document.getElementById("ai-summarize-tab-btn");
   const aiClearBtn = document.getElementById("ai-clear-btn");
   const aiAddModelBtn = document.getElementById("ai-add-model-btn");
   const aiAddModelInput = document.getElementById("ai-add-model-input");
@@ -458,6 +459,10 @@
   const aiConvSaveBtn = document.getElementById("ai-conv-save");
   const aiConvDeleteBtn = document.getElementById("ai-conv-delete");
   const aiThinkingRow = document.getElementById("ai-thinking");
+
+  const AI_TAB_AGENT_TEXT_MAX = 12000;
+  const AI_TAB_AGENT_LOAD_TIMEOUT_MS = 42000;
+  const AI_TAB_AGENT_SETTLE_MS = 500;
 
   /** @type {{ role: string, content: string }[]} */
   let aiChatMessages = [];
@@ -1181,6 +1186,8 @@
         msg +=
           " Tab agent is on — the assistant may open real tabs or read tab text (your profile cookies apply; confirm before open if enabled in Settings).";
       }
+      msg +=
+        " Summarize tab sends a plain-text excerpt of the active http(s) page (not the home tab) to the model for a short summary.";
       aiDrawerHint.textContent = msg;
     } catch {
       aiDrawerHint.textContent = "";
@@ -1269,6 +1276,45 @@
     setAiDrawerOpen(!aiDrawerIsOpen());
   }
 
+  /**
+   * @param {"openai"|"anthropic"|"google"} provider
+   * @param {string} model
+   * @param {{ role: string, content: string }[]} messages
+   */
+  async function streamAiAssistantFromMessages(provider, model, messages) {
+    let full = "";
+    if (typeof window.nebula?.aiChatStream !== "function") {
+      throw new Error("Streaming is not available.");
+    }
+    await new Promise((resolve, reject) => {
+      window.nebula.aiChatStream(
+        { provider, model, messages },
+        (chunk) => {
+          setAiThinkingVisible(false);
+          full += chunk;
+          if (!aiMessagesEl) return;
+          if (!aiStreamBubbleEl) {
+            aiStreamBubbleEl = document.createElement("div");
+            aiStreamBubbleEl.className = "ai-msg ai-msg-assistant ai-msg-streaming";
+            aiStreamBubbleEl.setAttribute("aria-live", "polite");
+            aiMessagesEl.appendChild(aiStreamBubbleEl);
+          }
+          aiStreamBubbleEl.textContent = full;
+          queueMicrotask(() => {
+            try {
+              aiMessagesEl.scrollTop = aiMessagesEl.scrollHeight;
+            } catch {
+              /* */
+            }
+          });
+        },
+        () => resolve(),
+        (err) => reject(new Error(String(err || "Stream failed")))
+      );
+    });
+    return full;
+  }
+
   async function aiSendUserMessage() {
     if (aiSendBusy || !aiInput || !aiModel || !aiProvider) return;
     const text = String(aiInput.value || "").trim();
@@ -1285,38 +1331,11 @@
     removeAiStreamBubble();
     setAiThinkingVisible(true);
     if (aiSendBtn) aiSendBtn.disabled = true;
+    if (aiSummarizeTabBtn) aiSummarizeTabBtn.disabled = true;
     if (aiInput) aiInput.disabled = true;
     let full = "";
     try {
-      if (typeof window.nebula?.aiChatStream !== "function") {
-        throw new Error("Streaming is not available.");
-      }
-      await new Promise((resolve, reject) => {
-        window.nebula.aiChatStream(
-          { provider, model, messages: payloadMessages },
-          (chunk) => {
-            setAiThinkingVisible(false);
-            full += chunk;
-            if (!aiMessagesEl) return;
-            if (!aiStreamBubbleEl) {
-              aiStreamBubbleEl = document.createElement("div");
-              aiStreamBubbleEl.className = "ai-msg ai-msg-assistant ai-msg-streaming";
-              aiStreamBubbleEl.setAttribute("aria-live", "polite");
-              aiMessagesEl.appendChild(aiStreamBubbleEl);
-            }
-            aiStreamBubbleEl.textContent = full;
-            queueMicrotask(() => {
-              try {
-                aiMessagesEl.scrollTop = aiMessagesEl.scrollHeight;
-              } catch {
-                /* */
-              }
-            });
-          },
-          () => resolve(),
-          (err) => reject(new Error(String(err || "Stream failed")))
-        );
-      });
+      full = await streamAiAssistantFromMessages(provider, model, payloadMessages);
       removeAiStreamBubble();
       if (full.trim()) {
         aiChatMessages.push({ role: "assistant", content: full });
@@ -1329,6 +1348,79 @@
     }
     setAiThinkingVisible(false);
     if (aiSendBtn) aiSendBtn.disabled = false;
+    if (aiSummarizeTabBtn) aiSummarizeTabBtn.disabled = false;
+    if (aiInput) aiInput.disabled = false;
+    aiSendBusy = false;
+    renderAiMessageBubbles();
+    persistCurrentAiConversation();
+  }
+
+  async function aiSummarizeCurrentTab() {
+    if (aiSendBusy || !aiModel || !aiProvider) return;
+    const provider =
+      aiProvider.value === "anthropic" ? "anthropic" : aiProvider.value === "google" ? "google" : "openai";
+    const model = String(aiModel.value || "").trim();
+    if (!model) {
+      alert("Choose a model in the assistant drawer first.");
+      return;
+    }
+    const w = getActiveWebview();
+    if (!w || typeof w.executeJavaScript !== "function") {
+      alert("No active tab to summarize.");
+      return;
+    }
+    let pageUrl = "";
+    let title = "";
+    try {
+      pageUrl = w.getURL() || "";
+      title = w.getTitle() || "";
+    } catch {
+      alert("Could not read this tab.");
+      return;
+    }
+    if (!isHttpLikePageUrl(pageUrl) || isWelcomePageUrl(pageUrl)) {
+      alert("Open a normal web page (http or https) in this tab first — not the home page or an internal URL.");
+      return;
+    }
+
+    setAiDrawerOpen(true);
+
+    const text = await extractPlainTextFromGuestWebview(w);
+    const excerpt = String(text || "").slice(0, AI_TAB_AGENT_TEXT_MAX);
+    const userLabel = `Summarize this tab — ${title || "Untitled"}`;
+    const systemLine =
+      "You summarize web pages for the user. Use only the plain-text excerpt below (it may be truncated). If it is empty or unclear, say so briefly. Output a concise summary (a title line plus a short paragraph or a few bullets). Do not invent facts not supported by the excerpt.";
+    const userPayload = `Page title: ${title || "(none)"}\nURL: ${pageUrl}\n\nPlain-text excerpt:\n${excerpt}`;
+
+    aiChatMessages.push({ role: "user", content: userLabel });
+    renderAiMessageBubbles();
+
+    aiSendBusy = true;
+    removeAiStreamBubble();
+    setAiThinkingVisible(true);
+    if (aiSendBtn) aiSendBtn.disabled = true;
+    if (aiSummarizeTabBtn) aiSummarizeTabBtn.disabled = true;
+    if (aiInput) aiInput.disabled = true;
+
+    let full = "";
+    try {
+      full = await streamAiAssistantFromMessages(provider, model, [
+        { role: "system", content: systemLine },
+        { role: "user", content: userPayload },
+      ]);
+      removeAiStreamBubble();
+      if (full.trim()) {
+        aiChatMessages.push({ role: "assistant", content: full.trim() });
+      } else {
+        aiChatMessages.push({ role: "error", content: "Empty response." });
+      }
+    } catch (e) {
+      removeAiStreamBubble();
+      aiChatMessages.push({ role: "error", content: String(e && e.message ? e.message : e) });
+    }
+    setAiThinkingVisible(false);
+    if (aiSendBtn) aiSendBtn.disabled = false;
+    if (aiSummarizeTabBtn) aiSummarizeTabBtn.disabled = false;
     if (aiInput) aiInput.disabled = false;
     aiSendBusy = false;
     renderAiMessageBubbles();
@@ -5930,10 +6022,6 @@
     return entry;
   }
 
-  const AI_TAB_AGENT_TEXT_MAX = 12000;
-  const AI_TAB_AGENT_LOAD_TIMEOUT_MS = 42000;
-  const AI_TAB_AGENT_SETTLE_MS = 500;
-
   function isPrivateOrLocalHostnameForAiTab(hostname) {
     const h = String(hostname || "")
       .toLowerCase()
@@ -6402,6 +6490,10 @@
   aiSendBtn?.addEventListener("click", (e) => {
     e.stopPropagation();
     void aiSendUserMessage();
+  });
+  aiSummarizeTabBtn?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    void aiSummarizeCurrentTab();
   });
   aiClearBtn?.addEventListener("click", (e) => {
     e.stopPropagation();

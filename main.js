@@ -415,6 +415,34 @@ function runDetachedWindowsInstaller(exePath) {
   });
 }
 
+/**
+ * After Nebula quits, the NSIS `/S` installer usually does not relaunch the app.
+ * Spawn a detached PowerShell one-shot that waits for this process to exit, allows time
+ * for the installer to finish, then starts the installed exe again (same path post-upgrade).
+ */
+function spawnWindowsPostUpdateRelaunchHelper() {
+  if (process.platform !== "win32" || !app.isPackaged) return;
+  const pid = process.pid;
+  const exeQuoted = JSON.stringify(process.execPath);
+  const ps = [
+    "$ErrorActionPreference='SilentlyContinue'",
+    `while (Get-Process -Id ${pid} -ErrorAction SilentlyContinue) { Start-Sleep -Milliseconds 300 }`,
+    "Start-Sleep -Seconds 6",
+    `Start-Process -FilePath ${exeQuoted}`,
+  ].join(";");
+  try {
+    const child = spawn(
+      "powershell.exe",
+      ["-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-Command", ps],
+      { detached: true, stdio: "ignore" }
+    );
+    child.on("error", (e) => console.warn("[Nebula] post-update relaunch helper:", e?.message || e));
+    child.unref();
+  } catch (e) {
+    console.warn("[Nebula] post-update relaunch helper:", e?.message || e);
+  }
+}
+
 function ensureGuestCapturePoll() {
   if (guestCapturePollTimer != null) return;
   guestCapturePollTimer = setInterval(() => {
@@ -658,9 +686,9 @@ ipcMain.handle("nebula-start-windows-installer-update", async (event, payload) =
   const { response } = await dialog.showMessageBox(parent || undefined, {
     type: "warning",
     title: "Install update",
-    message: "Nebula will download the update, quit, and run the Windows installer.",
+    message: "Nebula will download the update, quit, run the Windows installer, then try to open Nebula again when the upgrade finishes.",
     detail:
-      "The installer usually runs silently (/S). If nothing seems to happen, check the release page and run the installer manually. You may be prompted by Windows (UAC).",
+      "The installer usually runs silently (/S). Nebula waits for the install to finish, then starts the app from the same shortcut path. If nothing opens, launch Nebula from the Start menu or run the installer again from the release page. You may be prompted by Windows (UAC).",
     buttons: ["Continue", "Cancel"],
     defaultId: 0,
     cancelId: 1,
@@ -692,6 +720,8 @@ ipcMain.handle("nebula-start-windows-installer-update", async (event, payload) =
     }
     return { ok: false, reason: String(err?.message || err) };
   }
+
+  spawnWindowsPostUpdateRelaunchHelper();
 
   setTimeout(() => {
     try {
