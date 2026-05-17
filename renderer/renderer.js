@@ -427,6 +427,12 @@
   const translatePanelGo = document.getElementById("translate-panel-go");
   const translatePanelOriginal = document.getElementById("translate-panel-original");
   const translateDropdownWrap = document.querySelector(".translate-dropdown-wrap");
+  const btnVpn = document.getElementById("btn-vpn");
+  const vpnDropdownWrap = document.querySelector(".vpn-dropdown-wrap");
+  const vpnPanel = document.getElementById("vpn-panel");
+  const vpnPanelProviderList = document.getElementById("vpn-panel-provider-list");
+  const vpnPanelOpenApp = document.getElementById("vpn-panel-open-app");
+  const vpnPanelDownload = document.getElementById("vpn-panel-download");
 
   const AI_PRESET_MODELS = {
     openai: ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "o1-mini", "o1-preview"],
@@ -510,6 +516,7 @@
     bookmark: true,
     sitePerm: true,
     translate: true,
+    vpn: true,
     ai: true,
     zoomReset: true,
   };
@@ -563,7 +570,55 @@
       remoteMinChars: 2,
       debounceMs: 220,
     },
+    network: {
+      proxy: { mode: "direct", proxyRules: "", proxyBypassRules: "" },
+    },
+    vpnHelper: {
+      selectedProviderId: "none",
+      nebulaVpnEnabled: false,
+      lastDownloadChoice: "ask",
+    },
   };
+
+  /** Official download pages only; `fixedProxyRules` only if accurate (otherwise Nebula uses system proxy when routing is on). */
+  const NEBULA_VPN_HELPER_PROVIDERS = [
+    { id: "none", label: "— None —", downloadUrl: "", helpUrl: "", fixedProxyRules: "" },
+    {
+      id: "mullvad",
+      label: "Mullvad VPN",
+      downloadUrl: "https://mullvad.net/en/download",
+      helpUrl: "https://mullvad.net/help",
+      fixedProxyRules: "",
+    },
+    {
+      id: "protonvpn",
+      label: "Proton VPN",
+      downloadUrl: "https://protonvpn.com/download",
+      helpUrl: "https://protonvpn.com/support",
+      fixedProxyRules: "",
+    },
+    {
+      id: "nordvpn",
+      label: "NordVPN",
+      downloadUrl: "https://nordvpn.com/download/",
+      helpUrl: "https://support.nordvpn.com/",
+      fixedProxyRules: "",
+    },
+    {
+      id: "windscribe",
+      label: "Windscribe",
+      downloadUrl: "https://windscribe.com/download",
+      helpUrl: "https://windscribe.com/support",
+      fixedProxyRules: "",
+    },
+    {
+      id: "surfshark",
+      label: "Surfshark",
+      downloadUrl: "https://surfshark.com/download",
+      helpUrl: "https://support.surfshark.com/",
+      fixedProxyRules: "",
+    },
+  ];
 
   /** @type {typeof DEFAULT_APP_SETTINGS} */
   let appSettings = {
@@ -571,6 +626,8 @@
     searchSuggestions: { ...DEFAULT_APP_SETTINGS.searchSuggestions },
     toolbarButtons: { ...DEFAULT_APP_SETTINGS.toolbarButtons },
     aiAssistant: JSON.parse(JSON.stringify(DEFAULT_APP_SETTINGS.aiAssistant)),
+    network: JSON.parse(JSON.stringify(DEFAULT_APP_SETTINGS.network)),
+    vpnHelper: JSON.parse(JSON.stringify(DEFAULT_APP_SETTINGS.vpnHelper)),
   };
 
   function normalizeOpenAiBaseUrlApp(raw) {
@@ -638,6 +695,34 @@
     };
   }
 
+  function normalizeAppNetwork(raw) {
+    const net = raw && typeof raw === "object" ? raw : {};
+    const pr = net.proxy && typeof net.proxy === "object" ? net.proxy : {};
+    const modes = new Set(["direct", "system", "fixed"]);
+    const defP = DEFAULT_APP_SETTINGS.network.proxy;
+    let mode = typeof pr.mode === "string" ? pr.mode.trim().toLowerCase() : defP.mode;
+    if (!modes.has(mode)) mode = defP.mode;
+    const proxyRules = typeof pr.proxyRules === "string" ? pr.proxyRules.trim().slice(0, 2048) : "";
+    const proxyBypassRules = typeof pr.proxyBypassRules === "string" ? pr.proxyBypassRules.trim().slice(0, 2048) : "";
+    if (mode === "fixed" && !proxyRules) mode = "direct";
+    return { proxy: { mode, proxyRules, proxyBypassRules } };
+  }
+
+  function normalizeAppVpnHelper(raw) {
+    const v = raw && typeof raw === "object" ? raw : {};
+    const allowed = new Set(["none", "mullvad", "protonvpn", "nordvpn", "windscribe", "surfshark"]);
+    let selectedProviderId = typeof v.selectedProviderId === "string" ? v.selectedProviderId.trim().toLowerCase() : "none";
+    if (!allowed.has(selectedProviderId)) selectedProviderId = "none";
+    const nebulaVpnEnabled = v.nebulaVpnEnabled === true;
+    const ldcRaw = typeof v.lastDownloadChoice === "string" ? v.lastDownloadChoice.trim().toLowerCase() : "ask";
+    const lastDownloadChoice = ldcRaw === "nebula" || ldcRaw === "external" ? ldcRaw : "ask";
+    return { selectedProviderId, nebulaVpnEnabled, lastDownloadChoice };
+  }
+
+  function getVpnHelperSelectedProviderId() {
+    return normalizeAppVpnHelper(appSettings.vpnHelper || {}).selectedProviderId;
+  }
+
   function getSearchSettings() {
     return appSettings.searchSuggestions;
   }
@@ -701,6 +786,8 @@
       newTabButtonPlacement:
         typeof o.newTabButtonPlacement === "string" ? o.newTabButtonPlacement : DEFAULT_APP_SETTINGS.newTabButtonPlacement,
       aiAssistant: normalizeAppAiAssistant(o.aiAssistant),
+      network: normalizeAppNetwork(o.network),
+      vpnHelper: normalizeAppVpnHelper(o.vpnHelper),
     };
     const ss = merged.searchSuggestions;
     const layers = ["past", "local", "remote"];
@@ -737,6 +824,7 @@
       bookmark: typeof tbm.bookmark === "boolean" ? tbm.bookmark : tb0.bookmark,
       sitePerm: typeof tbm.sitePerm === "boolean" ? tbm.sitePerm : tb0.sitePerm,
       translate: typeof tbm.translate === "boolean" ? tbm.translate : tb0.translate,
+      vpn: typeof tbm.vpn === "boolean" ? tbm.vpn : tb0.vpn,
       ai: typeof tbm.ai === "boolean" ? tbm.ai : tb0.ai,
       zoomReset: typeof tbm.zoomReset === "boolean" ? tbm.zoomReset : tb0.zoomReset,
     };
@@ -759,6 +847,7 @@
         if (typeof window.nebula.registerAiTabToolHandler === "function") {
           window.nebula.registerAiTabToolHandler(handleAiTabToolMessage);
         }
+        refreshVpnPanelFromSettings();
         return;
       } catch {
         /* */
@@ -772,6 +861,7 @@
     if (typeof window.nebula.registerAiTabToolHandler === "function") {
       window.nebula.registerAiTabToolHandler(handleAiTabToolMessage);
     }
+    refreshVpnPanelFromSettings();
   }
 
   let shellSystemThemeCleanup = null;
@@ -1163,6 +1253,7 @@
     btnAi.setAttribute("aria-expanded", open ? "true" : "false");
     if (open) {
       closeTranslatePanel();
+      closeVpnPanel();
       syncAiProviderAndModelFromSettings();
       void refreshAiDrawerHint();
       ensureAiConversationsOnDrawerOpen();
@@ -1262,6 +1353,10 @@
       translateDropdownWrap.hidden = !tb.translate;
       translateDropdownWrap.setAttribute("aria-hidden", tb.translate ? "false" : "true");
     }
+    if (vpnDropdownWrap) {
+      vpnDropdownWrap.hidden = !tb.vpn;
+      vpnDropdownWrap.setAttribute("aria-hidden", tb.vpn ? "false" : "true");
+    }
     if (aiToolbarWrap) {
       aiToolbarWrap.hidden = !tb.ai;
       aiToolbarWrap.setAttribute("aria-hidden", tb.ai ? "false" : "true");
@@ -1280,6 +1375,7 @@
       btnNewTabStrip.setAttribute("aria-hidden", ntp === "header" ? "true" : "false");
     }
     if (!tb.translate) closeTranslatePanel();
+    if (!tb.vpn) closeVpnPanel();
     if (!tb.ai) closeAiDrawer();
   }
 
@@ -3323,6 +3419,12 @@
     chk("settings-ai-page-fetch-enabled", ai.pageFetchEnabled === true);
     chk("settings-ai-tab-agent-enabled", ai.tabAgentEnabled === true);
     chk("settings-ai-tab-agent-confirm-nav", ai.tabAgentConfirmNavigation !== false);
+    const net = s.network && typeof s.network === "object" ? s.network : DEFAULT_APP_SETTINGS.network;
+    const px = net.proxy && typeof net.proxy === "object" ? net.proxy : DEFAULT_APP_SETTINGS.network.proxy;
+    const pm = document.getElementById("settings-proxy-mode");
+    if (pm) pm.value = px.mode === "system" || px.mode === "fixed" ? px.mode : "direct";
+    el("settings-proxy-rules", px.proxyRules || "");
+    el("settings-proxy-bypass", px.proxyBypassRules || "");
     chk("settings-ss-past", ss.enablePastSearch);
     chk("settings-ss-bookmarks", ss.enableBookmarks);
     chk("settings-ss-history", ss.enableHistory);
@@ -3379,6 +3481,7 @@
     chk("settings-tb-bookmark", tbb.bookmark !== false);
     chk("settings-tb-site-perm", tbb.sitePerm !== false);
     chk("settings-tb-translate", tbb.translate !== false);
+    chk("settings-tb-vpn", tbb.vpn !== false);
     chk("settings-tb-ai", tbb.ai !== false);
     chk("settings-tb-zoom-reset", tbb.zoomReset !== false);
   }
@@ -3428,6 +3531,7 @@
       bookmark: !!(document.getElementById("settings-tb-bookmark")?.checked),
       sitePerm: !!(document.getElementById("settings-tb-site-perm")?.checked),
       translate: !!(document.getElementById("settings-tb-translate")?.checked),
+      vpn: !!(document.getElementById("settings-tb-vpn")?.checked),
       ai: !!(document.getElementById("settings-tb-ai")?.checked),
       zoomReset: !!(document.getElementById("settings-tb-zoom-reset")?.checked),
     };
@@ -3485,6 +3589,14 @@
         remoteMinChars: num("settings-ss-remote-min", 2),
         debounceMs: num("settings-ss-debounce", 220),
       },
+      network: normalizeAppNetwork({
+        proxy: {
+          mode: String(document.getElementById("settings-proxy-mode")?.value || "direct").trim().toLowerCase(),
+          proxyRules: String(document.getElementById("settings-proxy-rules")?.value || "").trim(),
+          proxyBypassRules: String(document.getElementById("settings-proxy-bypass")?.value || "").trim(),
+        },
+      }),
+      vpnHelper: normalizeAppVpnHelper(appSettings.vpnHelper || {}),
     };
   }
 
@@ -5153,6 +5265,7 @@
     if (!open && wasOpen) scheduleRestoreGuestFocus();
     if (open) {
       closeAiDrawer();
+      closeVpnPanel();
       ensureTranslateLangSelect();
       const hint = document.getElementById("translate-panel-hint");
       if (hint) {
@@ -5170,6 +5283,75 @@
 
   function closeTranslatePanel() {
     setTranslatePanelOpen(false);
+  }
+
+  function ensureVpnProviderList() {
+    if (!vpnPanelProviderList || vpnPanelProviderList.dataset.nebulaReady === "1") return;
+    vpnPanelProviderList.dataset.nebulaReady = "1";
+    vpnPanelProviderList.replaceChildren();
+    for (const row of NEBULA_VPN_HELPER_PROVIDERS) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "vpn-provider-option";
+      b.setAttribute("data-provider-id", row.id);
+      b.setAttribute("role", "option");
+      b.setAttribute("aria-selected", "false");
+      b.textContent = row.label;
+      vpnPanelProviderList.appendChild(b);
+    }
+  }
+
+  function refreshVpnProviderListSelection() {
+    if (!vpnPanelProviderList) return;
+    const want = getVpnHelperSelectedProviderId();
+    for (const btn of vpnPanelProviderList.querySelectorAll(".vpn-provider-option")) {
+      const id = btn.getAttribute("data-provider-id") || "";
+      const sel = id === want;
+      btn.classList.toggle("is-selected", sel);
+      btn.setAttribute("aria-selected", sel ? "true" : "false");
+    }
+  }
+
+  function refreshVpnPanelFromSettings() {
+    ensureVpnProviderList();
+    refreshVpnProviderListSelection();
+  }
+
+  async function persistVpnRoutingAndNetwork(patch) {
+    if (!window.nebula?.setSettings) return;
+    try {
+      const next = await window.nebula.setSettings(patch);
+      appSettings = normalizeAppSettings(next);
+    } catch {
+      /* */
+    }
+    refreshVpnPanelFromSettings();
+  }
+
+  function vpnPanelIsOpen() {
+    return !!(vpnPanel && !vpnPanel.hidden);
+  }
+
+  function setVpnPanelOpen(open) {
+    if (!vpnPanel || !btnVpn) return;
+    const wasOpen = !vpnPanel.hidden;
+    vpnPanel.hidden = !open;
+    btnVpn.setAttribute("aria-expanded", open ? "true" : "false");
+    if (!open && wasOpen) scheduleRestoreGuestFocus();
+    if (open) {
+      closeTranslatePanel();
+      closeAiDrawer();
+      ensureVpnProviderList();
+      refreshVpnPanelFromSettings();
+    }
+  }
+
+  function toggleVpnPanel() {
+    setVpnPanelOpen(!vpnPanelIsOpen());
+  }
+
+  function closeVpnPanel() {
+    setVpnPanelOpen(false);
   }
 
   function isHttpLikePageUrl(urlStr) {
@@ -6134,6 +6316,52 @@
     e.stopPropagation();
     toggleTranslatePanel();
   });
+  btnVpn?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    toggleVpnPanel();
+  });
+  vpnPanelProviderList?.addEventListener("click", (e) => {
+    const btn = e.target instanceof Element ? e.target.closest(".vpn-provider-option") : null;
+    if (!btn || !vpnPanelProviderList.contains(btn)) return;
+    e.stopPropagation();
+    const sid = String(btn.getAttribute("data-provider-id") || "none");
+    const vh0 = normalizeAppVpnHelper(appSettings.vpnHelper || {});
+    void persistVpnRoutingAndNetwork({ vpnHelper: { ...vh0, selectedProviderId: sid } });
+  });
+  function openVpnDownloadForSelected() {
+    const sid = getVpnHelperSelectedProviderId();
+    const prov = NEBULA_VPN_HELPER_PROVIDERS.find((p) => p.id === sid);
+    if (!prov || !prov.downloadUrl) {
+      alert("Pick a provider with a download link.");
+      return;
+    }
+    const useNebula = !!confirm(
+      "Open this official download page in a new Nebula tab?\n\nOK = Nebula tab\nCancel = your default system browser"
+    );
+    const vh0 = normalizeAppVpnHelper(appSettings.vpnHelper || {});
+    void persistVpnRoutingAndNetwork({ vpnHelper: { ...vh0, lastDownloadChoice: useNebula ? "nebula" : "external" } });
+    if (useNebula) createTab(prov.downloadUrl);
+    else if (window.nebula?.openExternalUrl) void window.nebula.openExternalUrl(prov.downloadUrl);
+  }
+  vpnPanelOpenApp?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    void (async () => {
+      const sid = getVpnHelperSelectedProviderId();
+      if (sid === "none") {
+        alert("Pick a provider first.");
+        return;
+      }
+      if (typeof window.nebula?.vpnHelperOpenApp !== "function") return;
+      const r = await window.nebula.vpnHelperOpenApp(sid);
+      if (r?.ok) return;
+      const msg = r && r.error ? String(r.error) : "Could not start the VPN app.";
+      if (confirm(`${msg}\n\nOpen the official download page?`)) openVpnDownloadForSelected();
+    })();
+  });
+  vpnPanelDownload?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    openVpnDownloadForSelected();
+  });
   btnAi?.addEventListener("click", (e) => {
     e.stopPropagation();
     toggleAiDrawer();
@@ -6222,12 +6450,33 @@
     e.stopPropagation();
     viewOriginalForActiveTab();
   });
+  /**
+   * True if the event originated inside `container`, including UA shadow targets
+   * (e.g. checkbox or select internals where `target` is not a light-DOM descendant).
+   */
+  function eventPathIncludesContainer(container, ev) {
+    if (!container) return false;
+    const t = ev.target;
+    if (t instanceof Node && container.contains(t)) return true;
+    if (typeof ev.composedPath === "function") {
+      try {
+        const path = ev.composedPath();
+        for (let i = 0; i < path.length; i++) {
+          const n = path[i];
+          if (n === container) return true;
+          if (n instanceof Node && container.contains(n)) return true;
+        }
+      } catch {
+        /* */
+      }
+    }
+    return false;
+  }
   document.addEventListener(
     "mousedown",
     (e) => {
       if (!translatePanelIsOpen()) return;
-      const t = e.target;
-      if (translateDropdownWrap && translateDropdownWrap.contains(t)) return;
+      if (eventPathIncludesContainer(translateDropdownWrap, e)) return;
       closeTranslatePanel();
     },
     true
@@ -6235,10 +6484,18 @@
   document.addEventListener(
     "mousedown",
     (e) => {
+      if (!vpnPanelIsOpen()) return;
+      if (eventPathIncludesContainer(vpnDropdownWrap, e)) return;
+      closeVpnPanel();
+    },
+    true
+  );
+  document.addEventListener(
+    "mousedown",
+    (e) => {
       if (!aiDrawerIsOpen()) return;
-      const t = e.target;
-      if (aiToolbarWrap && aiToolbarWrap.contains(t)) return;
-      if (aiDrawer && aiDrawer.contains(t)) return;
+      if (eventPathIncludesContainer(aiToolbarWrap, e)) return;
+      if (eventPathIncludesContainer(aiDrawer, e)) return;
       closeAiDrawer();
     },
     true

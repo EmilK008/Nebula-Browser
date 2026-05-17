@@ -281,6 +281,8 @@ contextBridge.exposeInMainWorld("nebula", {
       });
   },
   openExternalUrl: (url) => ipcRenderer.invoke("nebula-open-external-url", { url }),
+  /** Best-effort launch installed VPN app for allowlisted `providerId` (see VPN helper panel). */
+  vpnHelperOpenApp: (providerId) => ipcRenderer.invoke("nebula-vpn-helper-open-app", { providerId }),
   /** Native dialog: installer vs portable vs cancel; returns choice + URLs (renderer opens or runs installer). */
   promptUpdateInstallChoice: (payload) =>
     ipcRenderer.invoke("nebula-prompt-update-install-choice", payload ?? {}),

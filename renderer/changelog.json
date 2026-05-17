@@ -1,6 +1,13 @@
 {
   "entries": [
     {
+      "version": "0.9.1",
+      "date": "2026-05-08",
+      "improvements": [
+        "VPN helper panel: provider list plus “Try open VPN app” and “Get client” only — the in-panel proxy routing checkbox was removed so the helper stays focused on launching or downloading your provider’s app. Tab traffic still follows Settings → Network & proxy (direct, system, or fixed rules)."
+      ]
+    },
+    {
       "version": "0.9.0",
       "date": "2026-05-08",
       "added": [
@@ -10,7 +17,9 @@
         "AI assistant: a short “Thinking” indicator while the model responds, and streamed assistant text so replies grow in place instead of appearing all at once (OpenAI-, Anthropic-, and Gemini-style streaming APIs).",
         "AI assistant: optional web search via a `web_search` tool (Brave Search API key in the vault; enable under Settings → AI assistant); tool rounds run in the main process, then the final answer streams as usual.",
         "AI assistant: optional `fetch_page_text` tool (Tier A) — with “Page text fetch” enabled in Settings, the model can request public http(s) URLs; Nebula fetches HTML in the main process, strips tags to plain text (capped), with no cookies and blocked private IPs.",
-        "AI assistant: optional tab agent (Tier C) — with “Allow assistant to open tabs and read tab text” in Settings, the model can use `open_browser_tab` and `read_browser_tab_text` on real Nebula tabs (profile cookies and JS). You can require a confirm dialog before each assisted navigation (default on)."
+        "AI assistant: optional tab agent (Tier C) — with “Allow assistant to open tabs and read tab text” in Settings, the model can use `open_browser_tab` and `read_browser_tab_text` on real Nebula tabs (profile cookies and JS). You can require a confirm dialog before each assisted navigation (default on).",
+        "Settings → Network & proxy: choose direct networking, Chromium “system” proxy mode, or fixed proxy rules (SOCKS/HTTP per Chromium’s format). The same rules apply to tab webviews and the default session (including main-process features like optional AI page fetch and translation), so egress stays consistent; OS-level VPN tunnels still apply to all apps without extra Nebula setup.",
+        "Toolbar VPN helper: curated providers with official download links, try to open the desktop app from common install paths, get the client in a Nebula tab or the system browser, and toggle Nebula proxy routing (system vs direct) — not a bundled VPN; use the provider’s app for a full OS tunnel."
       ],
       "fixes": [
         "AI assistant web search: call Brave’s documented Web Search URL (`/res/v1/web/search`); the previous path returned non-JSON so the tool reported “invalid JSON.”"

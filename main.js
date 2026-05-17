@@ -1096,6 +1096,7 @@ const DEFAULT_TOOLBAR_BUTTONS = {
   bookmark: true,
   sitePerm: true,
   translate: true,
+  vpn: true,
   ai: true,
   zoomReset: true,
 };
@@ -1122,6 +1123,16 @@ const DEFAULT_AI_ASSISTANT = {
   tabAgentEnabled: false,
   /** If true (default), Tier C `open_browser_tab` asks for confirmation before navigating. */
   tabAgentConfirmNavigation: true,
+};
+
+/** HTTP(S) proxy for Chromium sessions (tabs + main `fetch` via defaultSession). Not a kernel VPN — use your VPN app at the OS level, or a local SOCKS/HTTP proxy here. */
+const DEFAULT_NETWORK_PROXY = {
+  /** `direct` | `system` | `fixed` (maps to Electron `fixed_servers`) */
+  mode: "direct",
+  /** Chromium proxy rules string when mode is `fixed`, e.g. `socks5://127.0.0.1:1080` */
+  proxyRules: "",
+  /** Optional bypass list (comma-separated hosts / patterns) */
+  proxyBypassRules: "",
 };
 
 const DEFAULT_SETTINGS = {
@@ -1160,6 +1171,47 @@ const DEFAULT_SETTINGS = {
     maxDuckDuckGo: 8,
     remoteMinChars: 2,
     debounceMs: 220,
+  },
+  network: {
+    proxy: { ...DEFAULT_NETWORK_PROXY },
+  },
+  /** Curated VPN helper UI (not a bundled VPN). */
+  vpnHelper: {
+    selectedProviderId: "none",
+    nebulaVpnEnabled: false,
+    /** `ask` | `nebula` | `external` — default for download link choice prompt. */
+    lastDownloadChoice: "ask",
+  },
+};
+
+/** Allowlisted ids for `nebula-vpn-helper-open-app` (must match renderer catalog). */
+const VPN_HELPER_PROVIDER_IDS = new Set(["mullvad", "protonvpn", "nordvpn", "windscribe", "surfshark"]);
+
+const VPN_HELPER_OPEN_HINTS = {
+  mullvad: {
+    win32: ["C:\\Program Files\\Mullvad VPN\\Mullvad VPN.exe", "C:\\Program Files (x86)\\Mullvad VPN\\Mullvad VPN.exe"],
+    darwin: ["/Applications/Mullvad VPN.app"],
+    linux: ["/usr/bin/mullvad-gui", "mullvad-gui"],
+  },
+  protonvpn: {
+    win32: ["C:\\Program Files\\Proton\\VPN\\Proton VPN.exe"],
+    darwin: ["/Applications/ProtonVPN.app"],
+    linux: ["/usr/bin/protonvpn-app", "protonvpn-app"],
+  },
+  nordvpn: {
+    win32: ["C:\\Program Files\\NordVPN\\NordVPN.exe"],
+    darwin: ["/Applications/NordVPN.app"],
+    linux: ["nordvpn"],
+  },
+  windscribe: {
+    win32: ["C:\\Program Files\\Windscribe\\Windscribe.exe"],
+    darwin: ["/Applications/Windscribe.app"],
+    linux: ["windscribe"],
+  },
+  surfshark: {
+    win32: ["C:\\Program Files\\Surfshark\\Surfshark.exe"],
+    darwin: ["/Applications/Surfshark.app"],
+    linux: ["surfshark"],
   },
 };
 
@@ -1204,11 +1256,34 @@ function normalizeShellChromeSettings(o) {
     bookmark: typeof rawTb.bookmark === "boolean" ? rawTb.bookmark : tb0.bookmark,
     sitePerm: typeof rawTb.sitePerm === "boolean" ? rawTb.sitePerm : tb0.sitePerm,
     translate: typeof rawTb.translate === "boolean" ? rawTb.translate : tb0.translate,
+    vpn: typeof rawTb.vpn === "boolean" ? rawTb.vpn : tb0.vpn,
     ai: typeof rawTb.ai === "boolean" ? rawTb.ai : tb0.ai,
     zoomReset: typeof rawTb.zoomReset === "boolean" ? rawTb.zoomReset : tb0.zoomReset,
   };
   const ntp = new Set(["header", "strip", "both"]);
   o.newTabButtonPlacement = ntp.has(o.newTabButtonPlacement) ? o.newTabButtonPlacement : DEFAULT_SETTINGS.newTabButtonPlacement;
+}
+
+function normalizeNetworkSettings(o) {
+  const pr =
+    o.network && typeof o.network === "object" && o.network.proxy && typeof o.network.proxy === "object" ? o.network.proxy : {};
+  const modes = new Set(["direct", "system", "fixed"]);
+  let mode = typeof pr.mode === "string" ? pr.mode.trim().toLowerCase() : DEFAULT_NETWORK_PROXY.mode;
+  if (!modes.has(mode)) mode = DEFAULT_NETWORK_PROXY.mode;
+  const proxyRules = typeof pr.proxyRules === "string" ? pr.proxyRules.trim().slice(0, 2048) : "";
+  const proxyBypassRules = typeof pr.proxyBypassRules === "string" ? pr.proxyBypassRules.trim().slice(0, 2048) : "";
+  if (mode === "fixed" && !proxyRules) mode = "direct";
+  o.network = { proxy: { mode, proxyRules, proxyBypassRules } };
+}
+
+function normalizeVpnHelperSettings(o) {
+  const raw = o.vpnHelper && typeof o.vpnHelper === "object" ? o.vpnHelper : {};
+  let selectedProviderId = typeof raw.selectedProviderId === "string" ? raw.selectedProviderId.trim().toLowerCase() : "none";
+  if (!VPN_HELPER_PROVIDER_IDS.has(selectedProviderId) && selectedProviderId !== "none") selectedProviderId = "none";
+  const nebulaVpnEnabled = raw.nebulaVpnEnabled === true;
+  const ldcRaw = typeof raw.lastDownloadChoice === "string" ? raw.lastDownloadChoice.trim().toLowerCase() : "ask";
+  const lastDownloadChoice = ldcRaw === "nebula" || ldcRaw === "external" ? ldcRaw : "ask";
+  o.vpnHelper = { selectedProviderId, nebulaVpnEnabled, lastDownloadChoice };
 }
 
 function normalizeSettings(s) {
@@ -1221,6 +1296,8 @@ function normalizeSettings(s) {
     o.searchSuggestions = clone(DEFAULT_SETTINGS.searchSuggestions);
     o.aiAssistant = normalizeAiAssistantSettings(o.aiAssistant);
     normalizeShellChromeSettings(o);
+    normalizeNetworkSettings(o);
+    normalizeVpnHelperSettings(o);
     return o;
   }
   const layers = ["past", "local", "remote"];
@@ -1253,6 +1330,8 @@ function normalizeSettings(s) {
   o.translateLibreUrl = tlu.slice(0, 512);
   o.aiAssistant = normalizeAiAssistantSettings(o.aiAssistant);
   normalizeShellChromeSettings(o);
+  normalizeNetworkSettings(o);
+  normalizeVpnHelperSettings(o);
   return o;
 }
 
@@ -1346,7 +1425,52 @@ ipcMain.handle("nebula-set-settings", (_e, patch) => {
   const ip = incognitoMemoryPartitionForProfileId(next.activeProfileId);
   nebulaAdblock.applyAdblockFromSettings(next, bp);
   nebulaAdblock.applyAdblockFromSettings(next, ip);
+  void applyWebProfileProxyFromSettings(next, bp, ip).catch((e) => console.warn("[Nebula] proxy apply:", e?.message || e));
   return augmentSettingsForRenderer(next);
+});
+
+function tryLaunchVpnHelperApp(providerId) {
+  if (providerId === "none" || !VPN_HELPER_PROVIDER_IDS.has(providerId)) {
+    return { ok: false, error: "Pick a VPN provider first." };
+  }
+  const hints = VPN_HELPER_OPEN_HINTS[providerId];
+  if (!hints) return { ok: false, error: "Unknown provider." };
+  const plat = process.platform;
+  const key = plat === "win32" ? "win32" : plat === "darwin" ? "darwin" : "linux";
+  const list = hints[key] || [];
+  for (const item of list) {
+    if (!item || typeof item !== "string") continue;
+    try {
+      if (plat === "win32") {
+        if (fs.existsSync(item)) {
+          const subprocess = spawn(item, [], { detached: true, stdio: "ignore" });
+          subprocess.unref();
+          return { ok: true };
+        }
+      } else if (plat === "darwin") {
+        if (fs.existsSync(item)) {
+          spawn("/usr/bin/open", [item], { detached: true, stdio: "ignore" }).unref();
+          return { ok: true };
+        }
+      } else if (item.startsWith("/") && fs.existsSync(item)) {
+        const subprocess = spawn(item, [], { detached: true, stdio: "ignore" });
+        subprocess.unref();
+        return { ok: true };
+      } else {
+        const subprocess = spawn(item, [], { detached: true, stdio: "ignore", shell: true });
+        subprocess.unref();
+        return { ok: true };
+      }
+    } catch {
+      /* try next hint */
+    }
+  }
+  return { ok: false, error: "VPN app not found in usual install locations." };
+}
+
+ipcMain.handle("nebula-vpn-helper-open-app", (_e, payload) => {
+  const id = typeof payload?.providerId === "string" ? payload.providerId.trim().toLowerCase() : "";
+  return tryLaunchVpnHelperApp(id);
 });
 
 /**
@@ -4994,7 +5118,51 @@ function createWindow() {
   win.on("close", () => saveWindowState(win));
 }
 
-function configureWebProfileSession(browsingPart, incognitoPart) {
+/**
+ * @param {{ mode: string, proxyRules: string, proxyBypassRules: string }} proxyNorm
+ * @param {Electron.Session} sess
+ */
+async function applyElectronProxyToSession(sess, proxyNorm) {
+  const mode = proxyNorm && typeof proxyNorm.mode === "string" ? proxyNorm.mode : "direct";
+  /** @type {Electron.ProxyConfig} */
+  let cfg;
+  if (mode === "system") {
+    cfg = { mode: "system" };
+    if (proxyNorm.proxyBypassRules) cfg.proxyBypassRules = proxyNorm.proxyBypassRules;
+  } else if (mode === "fixed") {
+    const rules = String(proxyNorm.proxyRules || "").trim();
+    if (!rules) {
+      cfg = { mode: "direct" };
+    } else {
+      cfg = { mode: "fixed_servers", proxyRules: rules };
+      if (proxyNorm.proxyBypassRules) cfg.proxyBypassRules = proxyNorm.proxyBypassRules;
+    }
+  } else {
+    cfg = { mode: "direct" };
+  }
+  try {
+    await sess.setProxy(cfg);
+  } catch (e) {
+    console.warn("[Nebula] setProxy:", e?.message || e);
+  }
+}
+
+/**
+ * Applies the same proxy to the shell/default session (main-process `fetch`, etc.) and both guest partitions (tabs).
+ * @param {ReturnType<typeof loadSettings>} settings
+ */
+async function applyWebProfileProxyFromSettings(settings, browsingPart, incognitoPart) {
+  const proxy =
+    settings.network && settings.network.proxy && typeof settings.network.proxy === "object"
+      ? settings.network.proxy
+      : DEFAULT_NETWORK_PROXY;
+  const sessions = [session.defaultSession, session.fromPartition(browsingPart), session.fromPartition(incognitoPart)];
+  for (const s of sessions) {
+    await applyElectronProxyToSession(s, proxy);
+  }
+}
+
+function configureWebProfileSession(browsingPart, incognitoPart, settingsForProxy) {
   sitePermissionsState = loadSitePermissionsState();
   const ua = chromeAlignedUserAgent();
   installSessionPermissionHandlers(session.defaultSession);
@@ -5003,6 +5171,10 @@ function configureWebProfileSession(browsingPart, incognitoPart) {
     s.setUserAgent(ua);
     installSessionPermissionHandlers(s);
   }
+  const sObj = settingsForProxy && typeof settingsForProxy === "object" ? settingsForProxy : loadSettings();
+  void applyWebProfileProxyFromSettings(sObj, browsingPart, incognitoPart).catch((e) =>
+    console.warn("[Nebula] proxy apply (startup):", e?.message || e)
+  );
 }
 
 /** Session preloads run in every guest frame (including iframes) before the webview preload. */
@@ -5029,7 +5201,7 @@ app.whenReady().then(async () => {
   const startupSettings = loadSettings();
   const browsingPart = browsingPersistPartitionForProfileId(startupSettings.activeProfileId);
   const incognitoPart = incognitoMemoryPartitionForProfileId(startupSettings.activeProfileId);
-  configureWebProfileSession(browsingPart, incognitoPart);
+  configureWebProfileSession(browsingPart, incognitoPart, startupSettings);
   attachDownloadHandlers(session.fromPartition(browsingPart));
   attachDownloadHandlers(session.fromPartition(incognitoPart));
   await nebulaAdblock.initAdblockEngine(browsingPart, loadSettings);

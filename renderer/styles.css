@@ -163,9 +163,18 @@ body {
 .translate-dropdown-wrap {
   position: relative;
   flex-shrink: 0;
+  /* Above .omnibox-wrap (z-index 20) so panel + native <select> receive clicks when overlapping the bar */
+  z-index: 30;
 }
 
-.translate-panel {
+.vpn-dropdown-wrap {
+  position: relative;
+  flex-shrink: 0;
+  z-index: 30;
+}
+
+.translate-panel,
+.vpn-panel {
   position: absolute;
   left: 0;
   top: calc(100% + 6px);
@@ -179,7 +188,8 @@ body {
   box-shadow: var(--panel-shadow);
 }
 
-.translate-panel[hidden] {
+.translate-panel[hidden],
+.vpn-panel[hidden] {
   display: none !important;
 }
 
@@ -204,6 +214,39 @@ body {
 
 .translate-panel-select {
   width: 100%;
+}
+
+.vpn-provider-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.vpn-provider-option {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  color: var(--text);
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+  outline: none;
+}
+
+.vpn-provider-option:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.vpn-provider-option.is-selected {
+  border-color: rgba(var(--accent-r), var(--accent-g), var(--accent-b), 0.45);
+  color: var(--accent);
+  background: rgba(var(--accent-r), var(--accent-g), var(--accent-b), 0.1);
 }
 
 .translate-panel-actions {
