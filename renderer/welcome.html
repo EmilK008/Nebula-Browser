@@ -6,6 +6,9 @@
     <title>New tab — Nebula</title>
     <style>
       :root {
+        --accent-r: 110;
+        --accent-g: 181;
+        --accent-b: 255;
         --bg: #0b0c10;
         --surface: rgba(18, 21, 28, 0.72);
         --text: #e8ecf4;
@@ -22,7 +25,7 @@
         font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
         background: var(--bg);
         color: var(--text);
-        background-image: radial-gradient(ellipse 120% 70% at 50% -20%, rgba(110, 181, 255, 0.14), transparent 55%),
+        background-image: radial-gradient(ellipse 120% 70% at 50% -20%, rgba(var(--accent-r), var(--accent-g), var(--accent-b), 0.14), transparent 55%),
           radial-gradient(ellipse 80% 40% at 100% 80%, rgba(99, 102, 241, 0.06), transparent 45%);
       }
       .ntp {
@@ -39,7 +42,7 @@
         height: 56px;
         margin: 0 auto 20px;
         border-radius: 16px;
-        background: linear-gradient(145deg, rgba(110, 181, 255, 0.25), rgba(99, 102, 241, 0.18));
+        background: linear-gradient(145deg, rgba(var(--accent-r), var(--accent-g), var(--accent-b), 0.25), rgba(99, 102, 241, 0.18));
         border: 1px solid var(--border);
         display: flex;
         align-items: center;
@@ -121,8 +124,8 @@
         transition: border-color 0.2s, box-shadow 0.2s;
       }
       .ntp-search-inner:focus-within {
-        border-color: rgba(110, 181, 255, 0.45);
-        box-shadow: 0 0 0 3px rgba(110, 181, 255, 0.12);
+        border-color: rgba(var(--accent-r), var(--accent-g), var(--accent-b), 0.45);
+        box-shadow: 0 0 0 3px rgba(var(--accent-r), var(--accent-g), var(--accent-b), 0.12);
       }
       .ntp-search-icon {
         width: 20px;
@@ -155,7 +158,7 @@
         padding: 0 16px;
         border: none;
         border-radius: 8px;
-        background: rgba(110, 181, 255, 0.18);
+        background: rgba(var(--accent-r), var(--accent-g), var(--accent-b), 0.18);
         color: var(--accent);
         font-size: 0.85rem;
         font-weight: 600;
@@ -164,7 +167,7 @@
         transition: background 0.15s, color 0.15s;
       }
       .ntp-search-btn:hover {
-        background: rgba(110, 181, 255, 0.28);
+        background: rgba(var(--accent-r), var(--accent-g), var(--accent-b), 0.28);
         color: var(--text);
       }
       .ntp-suggestions {
@@ -203,7 +206,7 @@
       }
       .ntp-suggestion:hover,
       .ntp-suggestion.is-active {
-        background: rgba(110, 181, 255, 0.14);
+        background: rgba(var(--accent-r), var(--accent-g), var(--accent-b), 0.14);
       }
       .ntp-suggestion-head {
         display: flex;
@@ -309,8 +312,8 @@
         transition: border-color 0.15s, background 0.15s;
       }
       a.tile:hover {
-        border-color: rgba(110, 181, 255, 0.28);
-        background: rgba(110, 181, 255, 0.06);
+        border-color: rgba(var(--accent-r), var(--accent-g), var(--accent-b), 0.28);
+        background: rgba(var(--accent-r), var(--accent-g), var(--accent-b), 0.06);
       }
       a.tile strong {
         font-size: 0.88rem;
@@ -352,6 +355,40 @@
         font-size: 0.72rem;
         color: var(--muted);
         opacity: 0.85;
+      }
+      html[data-welcome-shade="light"] {
+        color-scheme: light;
+        --bg: #f0f3fa;
+        --surface: rgba(255, 255, 255, 0.88);
+        --text: #0f172a;
+        --muted: #556987;
+        --border: rgba(15, 25, 55, 0.12);
+      }
+      html[data-welcome-shade="light"] body {
+        background-image: radial-gradient(ellipse 120% 70% at 50% -20%, rgba(var(--accent-r), var(--accent-g), var(--accent-b), 0.12), transparent 55%),
+          radial-gradient(ellipse 80% 40% at 100% 80%, rgba(99, 102, 241, 0.05), transparent 45%);
+      }
+      html[data-welcome-shade="light"] .ntp-mark {
+        box-shadow: 0 8px 32px rgba(15, 25, 55, 0.12);
+      }
+      html[data-welcome-shade="light"] .ntp-cue {
+        background: rgba(15, 25, 55, 0.05);
+      }
+      html[data-welcome-shade="light"] .ntp-search-inner {
+        background: rgba(255, 255, 255, 0.92);
+      }
+      html[data-welcome-shade="light"] .ntp-suggestions {
+        box-shadow: 0 14px 44px rgba(15, 25, 55, 0.12);
+      }
+      html[data-welcome-shade="light"] a.tile {
+        background: rgba(15, 25, 55, 0.04);
+      }
+      html[data-welcome-shade="light"] kbd {
+        background: rgba(15, 25, 55, 0.08);
+        color: var(--text);
+      }
+      html[data-welcome-shade="light"] .shortcuts-panel summary:hover {
+        background: rgba(15, 25, 55, 0.05);
       }
     </style>
   </head>

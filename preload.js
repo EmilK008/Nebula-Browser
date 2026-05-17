@@ -44,6 +44,24 @@ contextBridge.exposeInMainWorld("nebula", {
    * @param {number} webContentsId from webview.getWebContentsId()
    */
   guestClick: (webContentsId, x, y) => ipcRenderer.invoke("nebula-guest-click", { webContentsId, x, y }),
+  /**
+   * Move OS keyboard focus to the guest page (needed after native alert/confirm and some shell flows).
+   * @param {number} webContentsId from webview.getWebContentsId()
+   */
+  focusGuestWebContents: (webContentsId) =>
+    ipcRenderer.invoke("nebula-focus-guest-webcontents", { webContentsId }),
+  /**
+   * Blocking alert/confirm owned by the main process so focus can be restored to the guest webview after dismiss (Windows + webview).
+   * @param {{ kind: "alert"|"confirm", message: string, guestWebContentsId?: number }} payload
+   * @returns {boolean|undefined} confirm → boolean; alert → true
+   */
+  syncDialog: (payload) => {
+    try {
+      return ipcRenderer.sendSync("nebula-sync-dialog", payload ?? {});
+    } catch {
+      return payload && payload.kind === "confirm" ? false : undefined;
+    }
+  },
   /** Guest page context menu (links, copy, Inspect). */
   showWebviewContextMenu: (payload) => ipcRenderer.invoke("nebula-context-menu", payload),
   /**

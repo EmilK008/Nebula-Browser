@@ -1,6 +1,14 @@
 {
   "entries": [
     {
+      "version": "0.8.0",
+      "date": "2026-05-17",
+      "added": [
+        "Settings → Appearance & reading: choose window chrome theme (dark, light, or match the OS), pick an accent color for Nebula’s own UI, and switch between comfortable and compact density for the toolbar and tab strip.",
+        "Settings → Chrome layout: control whether the bookmarks bar is always visible, hidden, or only shown when you have bookmarks; choose whether the new-tab control appears in the header, on the tab strip, or both; and toggle optional toolbar buttons (Home, bookmark star, site permissions, Translate, zoom reset) while keeping Back, Forward, Reload, the address bar, and Settings available."
+      ]
+    },
+    {
       "version": "0.7.0",
       "date": "2026-05-16",
       "added": [

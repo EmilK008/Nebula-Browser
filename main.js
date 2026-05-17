@@ -1010,6 +1010,95 @@ ipcMain.handle("nebula-guest-click", (_e, payload) => {
   }
 });
 
+ipcMain.handle("nebula-focus-guest-webcontents", (event, payload) => {
+  const raw = payload && typeof payload === "object" ? payload.webContentsId : payload;
+  const id = Number(raw);
+  if (!Number.isFinite(id) || id <= 0) return { ok: false };
+  const guest = webContents.fromId(id);
+  if (!guest || guest.isDestroyed()) return { ok: false };
+  try {
+    const shellWc = event.sender;
+    const win = BrowserWindow.fromWebContents(shellWc);
+    if (win && !win.isDestroyed()) win.focus();
+    guest.focus();
+    return { ok: true };
+  } catch (err) {
+    console.error("[Nebula] focus-guest-webcontents failed:", err?.message || err);
+    return { ok: false };
+  }
+});
+
+/**
+ * Renderer `window.alert` / `confirm` do not return focus to `<webview>` guests on Windows.
+ * Sync IPC + `dialog.showMessageBoxSync` runs in main so we can refocus before returning to the shell.
+ */
+ipcMain.on("nebula-sync-dialog", (event, payload) => {
+  const replyFalse = () => {
+    event.returnValue = false;
+  };
+  if (!payload || typeof payload !== "object") {
+    replyFalse();
+    return;
+  }
+  const kind = payload.kind === "confirm" ? "confirm" : "alert";
+  const message = String(payload.message ?? "");
+  const guestId = Number(payload.guestWebContentsId);
+  const parent = BrowserWindow.fromWebContents(event.sender);
+  const title = typeof app.getName === "function" ? app.getName() : "Nebula";
+
+  const afterDismiss = () => {
+    try {
+      if (parent && !parent.isDestroyed()) parent.focus();
+      if (Number.isFinite(guestId) && guestId > 0) {
+        const guest = webContents.fromId(guestId);
+        if (guest && !guest.isDestroyed()) guest.focus();
+      }
+      if (!event.sender.isDestroyed()) event.sender.send("nebula-refocus-active-webview");
+    } catch (err) {
+      console.error("[Nebula] sync-dialog refocus failed:", err?.message || err);
+    }
+  };
+
+  try {
+    if (kind === "alert") {
+      dialog.showMessageBoxSync(parent || undefined, {
+        type: "info",
+        title,
+        message,
+        buttons: ["OK"],
+        defaultId: 0,
+        noLink: true,
+      });
+      afterDismiss();
+      event.returnValue = true;
+      return;
+    }
+    const response = dialog.showMessageBoxSync(parent || undefined, {
+      type: "question",
+      title,
+      message,
+      buttons: ["OK", "Cancel"],
+      defaultId: 0,
+      cancelId: 1,
+      noLink: true,
+    });
+    afterDismiss();
+    event.returnValue = response === 0;
+  } catch (err) {
+    console.error("[Nebula] sync-dialog failed:", err?.message || err);
+    replyFalse();
+  }
+});
+
+/** Default optional toolbar buttons (back/forward/reload/omnibox/settings stay always visible). */
+const DEFAULT_TOOLBAR_BUTTONS = {
+  home: true,
+  bookmark: true,
+  sitePerm: true,
+  translate: true,
+  zoomReset: true,
+};
+
 const DEFAULT_SETTINGS = {
   adblockEnabled: true,
   /** Chromium WebContentsForceDark — applied at process start when true (see commandLine above). */
@@ -1021,6 +1110,17 @@ const DEFAULT_SETTINGS = {
   /** Browsing profile id (cookies / session). `default` uses the legacy `persist:nebula` partition. */
   activeProfileId: "default",
   profiles: [{ id: "default", name: "Default" }],
+  /** Shell UI: `dark` | `light` | `system` (follow OS). */
+  shellTheme: "dark",
+  /** Accent color `#rrggbb` for chrome highlights. */
+  shellAccent: "#6eb5ff",
+  /** `comfortable` | `compact` tab bar and toolbar density. */
+  shellDensity: "comfortable",
+  /** `auto` = hide bookmarks bar when empty; `always` | `never`. */
+  bookmarksBarMode: "auto",
+  toolbarButtons: { ...DEFAULT_TOOLBAR_BUTTONS },
+  /** `header` | `strip` | `both` — new tab button placement. */
+  newTabButtonPlacement: "both",
   searchSuggestions: {
     layerOrder: ["past", "local", "remote"],
     enablePastSearch: true,
@@ -1063,6 +1163,27 @@ function mergeDeep(base, patch) {
   return out;
 }
 
+function normalizeShellChromeSettings(o) {
+  const themes = new Set(["dark", "light", "system"]);
+  o.shellTheme = themes.has(o.shellTheme) ? o.shellTheme : DEFAULT_SETTINGS.shellTheme;
+  const ac = typeof o.shellAccent === "string" ? o.shellAccent.trim() : "";
+  o.shellAccent = /^#[0-9a-fA-F]{6}$/.test(ac) ? ac.toLowerCase() : DEFAULT_SETTINGS.shellAccent;
+  o.shellDensity = o.shellDensity === "compact" ? "compact" : "comfortable";
+  const barModes = new Set(["auto", "always", "never"]);
+  o.bookmarksBarMode = barModes.has(o.bookmarksBarMode) ? o.bookmarksBarMode : DEFAULT_SETTINGS.bookmarksBarMode;
+  const tb0 = DEFAULT_TOOLBAR_BUTTONS;
+  const rawTb = o.toolbarButtons && typeof o.toolbarButtons === "object" ? o.toolbarButtons : {};
+  o.toolbarButtons = {
+    home: typeof rawTb.home === "boolean" ? rawTb.home : tb0.home,
+    bookmark: typeof rawTb.bookmark === "boolean" ? rawTb.bookmark : tb0.bookmark,
+    sitePerm: typeof rawTb.sitePerm === "boolean" ? rawTb.sitePerm : tb0.sitePerm,
+    translate: typeof rawTb.translate === "boolean" ? rawTb.translate : tb0.translate,
+    zoomReset: typeof rawTb.zoomReset === "boolean" ? rawTb.zoomReset : tb0.zoomReset,
+  };
+  const ntp = new Set(["header", "strip", "both"]);
+  o.newTabButtonPlacement = ntp.has(o.newTabButtonPlacement) ? o.newTabButtonPlacement : DEFAULT_SETTINGS.newTabButtonPlacement;
+}
+
 function normalizeSettings(s) {
   const o = clone(s);
   o.profiles = normalizeProfilesList(o.profiles);
@@ -1071,6 +1192,7 @@ function normalizeSettings(s) {
   const ss = o.searchSuggestions;
   if (!ss || typeof ss !== "object") {
     o.searchSuggestions = clone(DEFAULT_SETTINGS.searchSuggestions);
+    normalizeShellChromeSettings(o);
     return o;
   }
   const layers = ["past", "local", "remote"];
@@ -1101,6 +1223,7 @@ function normalizeSettings(s) {
   let tlu = typeof o.translateLibreUrl === "string" ? o.translateLibreUrl.trim() : "";
   if (!tlu) tlu = DEFAULT_SETTINGS.translateLibreUrl;
   o.translateLibreUrl = tlu.slice(0, 512);
+  normalizeShellChromeSettings(o);
   return o;
 }
 

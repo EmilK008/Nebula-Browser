@@ -574,6 +574,26 @@
             </section>
             <section class="settings-section">
               <h3 class="settings-section-title">Appearance &amp; reading</h3>
+              <label class="settings-field">
+                <span class="settings-label">Window chrome theme</span>
+                <select id="settings-shell-theme" class="settings-select">
+                  <option value="dark">Dark (default)</option>
+                  <option value="light">Light</option>
+                  <option value="system">Match system</option>
+                </select>
+              </label>
+              <label class="settings-field">
+                <span class="settings-label">Accent color</span>
+                <input type="color" id="settings-shell-accent" value="#6eb5ff" aria-label="Accent color" />
+              </label>
+              <label class="settings-field">
+                <span class="settings-label">Toolbar &amp; tabs density</span>
+                <select id="settings-shell-density" class="settings-select">
+                  <option value="comfortable">Comfortable</option>
+                  <option value="compact">Compact</option>
+                </select>
+              </label>
+              <p class="settings-hint">Theme and accent apply to Nebula’s own UI (not website content). “Match system” follows your OS light/dark preference.</p>
               <label class="settings-checkbox-row">
                 <input type="checkbox" id="settings-force-dark-mode" />
                 <span>Force dark mode for website content (Chromium auto-dark; restart Nebula after changing)</span>
@@ -581,6 +601,46 @@
               <p class="settings-hint">
                 Uses Chromium’s built-in darkening for pages. Some sites may look odd; turn it off and restart if needed. Read aloud: View → Read selection aloud, Ctrl+Shift+U (press again to stop), or right‑click the selection → Read aloud.
               </p>
+            </section>
+            <section class="settings-section">
+              <h3 class="settings-section-title">Chrome layout</h3>
+              <label class="settings-field">
+                <span class="settings-label">Bookmarks bar</span>
+                <select id="settings-bookmarks-bar-mode" class="settings-select">
+                  <option value="auto">Show when there are bookmarks (default)</option>
+                  <option value="always">Always show (even if empty)</option>
+                  <option value="never">Always hide</option>
+                </select>
+              </label>
+              <label class="settings-field">
+                <span class="settings-label">New tab button</span>
+                <select id="settings-new-tab-placement" class="settings-select">
+                  <option value="both">Header and tab strip (default)</option>
+                  <option value="header">Header only</option>
+                  <option value="strip">Tab strip only</option>
+                </select>
+              </label>
+              <p class="settings-hint">Back, Forward, Reload, the address bar, and Settings always stay visible. Toggle optional buttons below.</p>
+              <label class="settings-checkbox-row">
+                <input type="checkbox" id="settings-tb-home" />
+                <span>Home</span>
+              </label>
+              <label class="settings-checkbox-row">
+                <input type="checkbox" id="settings-tb-bookmark" />
+                <span>Bookmark star</span>
+              </label>
+              <label class="settings-checkbox-row">
+                <input type="checkbox" id="settings-tb-site-perm" />
+                <span>Site permissions</span>
+              </label>
+              <label class="settings-checkbox-row">
+                <input type="checkbox" id="settings-tb-translate" />
+                <span>Translate</span>
+              </label>
+              <label class="settings-checkbox-row">
+                <input type="checkbox" id="settings-tb-zoom-reset" />
+                <span>Zoom reset (100%)</span>
+              </label>
             </section>
             <section class="settings-section">
               <h3 class="settings-section-title">Translation</h3>

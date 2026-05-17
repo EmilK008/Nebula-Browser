@@ -467,6 +467,14 @@
   /** @type {{ navigateUrl: string, label: string, sub?: string, badge?: string }[]} */
   let omniboxSuggestionRows = [];
   let omniboxSelectedIndex = -1;
+  const DEFAULT_APP_TOOLBAR_BUTTONS = {
+    home: true,
+    bookmark: true,
+    sitePerm: true,
+    translate: true,
+    zoomReset: true,
+  };
+
   const DEFAULT_APP_SETTINGS = {
     adblockEnabled: true,
     forceDarkMode: false,
@@ -476,6 +484,12 @@
     profiles: [{ id: "default", name: "Default" }],
     browsingPartition: "persist:nebula",
     incognitoPartition: "nebula-pvt-nebula",
+    shellTheme: "dark",
+    shellAccent: "#6eb5ff",
+    shellDensity: "comfortable",
+    bookmarksBarMode: "auto",
+    toolbarButtons: { ...DEFAULT_APP_TOOLBAR_BUTTONS },
+    newTabButtonPlacement: "both",
     searchSuggestions: {
       layerOrder: ["past", "local", "remote"],
       enablePastSearch: true,
@@ -493,7 +507,11 @@
   };
 
   /** @type {typeof DEFAULT_APP_SETTINGS} */
-  let appSettings = { ...DEFAULT_APP_SETTINGS, searchSuggestions: { ...DEFAULT_APP_SETTINGS.searchSuggestions } };
+  let appSettings = {
+    ...DEFAULT_APP_SETTINGS,
+    searchSuggestions: { ...DEFAULT_APP_SETTINGS.searchSuggestions },
+    toolbarButtons: { ...DEFAULT_APP_SETTINGS.toolbarButtons },
+  };
 
   function getSearchSettings() {
     return appSettings.searchSuggestions;
@@ -547,6 +565,16 @@
         ...DEFAULT_APP_SETTINGS.searchSuggestions,
         ...(o.searchSuggestions && typeof o.searchSuggestions === "object" ? o.searchSuggestions : {}),
       },
+      shellTheme: typeof o.shellTheme === "string" ? o.shellTheme : DEFAULT_APP_SETTINGS.shellTheme,
+      shellAccent: typeof o.shellAccent === "string" ? o.shellAccent : DEFAULT_APP_SETTINGS.shellAccent,
+      shellDensity: o.shellDensity === "compact" ? "compact" : "comfortable",
+      bookmarksBarMode: typeof o.bookmarksBarMode === "string" ? o.bookmarksBarMode : DEFAULT_APP_SETTINGS.bookmarksBarMode,
+      toolbarButtons: {
+        ...DEFAULT_APP_TOOLBAR_BUTTONS,
+        ...(o.toolbarButtons && typeof o.toolbarButtons === "object" ? o.toolbarButtons : {}),
+      },
+      newTabButtonPlacement:
+        typeof o.newTabButtonPlacement === "string" ? o.newTabButtonPlacement : DEFAULT_APP_SETTINGS.newTabButtonPlacement,
     };
     const ss = merged.searchSuggestions;
     const layers = ["past", "local", "remote"];
@@ -569,6 +597,26 @@
     if (typeof ss.enableBookmarks !== "boolean") ss.enableBookmarks = true;
     if (typeof ss.enableHistory !== "boolean") ss.enableHistory = true;
     if (typeof ss.enableDuckDuckGo !== "boolean") ss.enableDuckDuckGo = true;
+    const themes = new Set(["dark", "light", "system"]);
+    merged.shellTheme = themes.has(merged.shellTheme) ? merged.shellTheme : DEFAULT_APP_SETTINGS.shellTheme;
+    const ac = typeof merged.shellAccent === "string" ? merged.shellAccent.trim() : "";
+    merged.shellAccent = /^#[0-9a-fA-F]{6}$/.test(ac) ? ac.toLowerCase() : DEFAULT_APP_SETTINGS.shellAccent;
+    merged.shellDensity = merged.shellDensity === "compact" ? "compact" : "comfortable";
+    const barModes = new Set(["auto", "always", "never"]);
+    merged.bookmarksBarMode = barModes.has(merged.bookmarksBarMode) ? merged.bookmarksBarMode : DEFAULT_APP_SETTINGS.bookmarksBarMode;
+    const tb0 = DEFAULT_APP_TOOLBAR_BUTTONS;
+    const tbm = merged.toolbarButtons && typeof merged.toolbarButtons === "object" ? merged.toolbarButtons : {};
+    merged.toolbarButtons = {
+      home: typeof tbm.home === "boolean" ? tbm.home : tb0.home,
+      bookmark: typeof tbm.bookmark === "boolean" ? tbm.bookmark : tb0.bookmark,
+      sitePerm: typeof tbm.sitePerm === "boolean" ? tbm.sitePerm : tb0.sitePerm,
+      translate: typeof tbm.translate === "boolean" ? tbm.translate : tb0.translate,
+      zoomReset: typeof tbm.zoomReset === "boolean" ? tbm.zoomReset : tb0.zoomReset,
+    };
+    const ntp = new Set(["header", "strip", "both"]);
+    merged.newTabButtonPlacement = ntp.has(merged.newTabButtonPlacement)
+      ? merged.newTabButtonPlacement
+      : DEFAULT_APP_SETTINGS.newTabButtonPlacement;
     return merged;
   }
 
@@ -578,6 +626,8 @@
         const s = await window.nebula.getSettings();
         appSettings = normalizeAppSettings(s);
         syncYoutubeAdSkipAdblockState();
+        applyShellAppearance();
+        syncChromeLayoutFromSettings();
         return;
       } catch {
         /* */
@@ -585,6 +635,89 @@
     }
     appSettings = normalizeAppSettings(DEFAULT_APP_SETTINGS);
     syncYoutubeAdSkipAdblockState();
+    applyShellAppearance();
+    syncChromeLayoutFromSettings();
+  }
+
+  let shellSystemThemeCleanup = null;
+
+  function shellAccentRgb(hex) {
+    const m = /^#?([0-9a-f]{6})$/i.exec(String(hex || "").trim());
+    if (!m) return { r: 110, g: 181, b: 255 };
+    const n = parseInt(m[1], 16);
+    return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
+  }
+
+  function detachShellSystemThemeListener() {
+    if (typeof shellSystemThemeCleanup === "function") {
+      shellSystemThemeCleanup();
+      shellSystemThemeCleanup = null;
+    }
+  }
+
+  function applyShellAppearance() {
+    const root = document.documentElement;
+    const shade = effectiveChromeShade();
+    root.setAttribute("data-chrome-shade", shade);
+    if (appSettings.shellDensity === "compact") {
+      root.setAttribute("data-shell-density", "compact");
+    } else {
+      root.removeAttribute("data-shell-density");
+    }
+    const hex =
+      appSettings.shellAccent && /^#[0-9a-fA-F]{6}$/.test(String(appSettings.shellAccent).trim())
+        ? String(appSettings.shellAccent).trim().toLowerCase()
+        : "#6eb5ff";
+    const { r, g, b } = shellAccentRgb(hex);
+    root.style.setProperty("--accent-r", String(r));
+    root.style.setProperty("--accent-g", String(g));
+    root.style.setProperty("--accent-b", String(b));
+    root.style.setProperty("--accent", hex);
+    root.style.setProperty("--accent-dim", `rgba(${r},${g},${b},0.15)`);
+
+    detachShellSystemThemeListener();
+    const theme = appSettings.shellTheme || "dark";
+    if (theme === "system") {
+      const mq = window.matchMedia("(prefers-color-scheme: dark)");
+      const onChange = () => applyShellAppearance();
+      mq.addEventListener("change", onChange);
+      shellSystemThemeCleanup = () => mq.removeEventListener("change", onChange);
+    }
+    syncWelcomeThemeInAllTabs();
+  }
+
+  function syncChromeLayoutFromSettings() {
+    const tb = appSettings.toolbarButtons || {};
+    if (btnHome) {
+      btnHome.hidden = !tb.home;
+      btnHome.setAttribute("aria-hidden", tb.home ? "false" : "true");
+    }
+    if (btnBookmark) {
+      btnBookmark.hidden = !tb.bookmark;
+      btnBookmark.setAttribute("aria-hidden", tb.bookmark ? "false" : "true");
+    }
+    if (btnSitePerm) {
+      btnSitePerm.hidden = !tb.sitePerm;
+      btnSitePerm.setAttribute("aria-hidden", tb.sitePerm ? "false" : "true");
+    }
+    if (translateDropdownWrap) {
+      translateDropdownWrap.hidden = !tb.translate;
+      translateDropdownWrap.setAttribute("aria-hidden", tb.translate ? "false" : "true");
+    }
+    if (btnZoomReset) {
+      btnZoomReset.hidden = !tb.zoomReset;
+      btnZoomReset.setAttribute("aria-hidden", tb.zoomReset ? "false" : "true");
+    }
+    const ntp = appSettings.newTabButtonPlacement || "both";
+    if (btnNewTab) {
+      btnNewTab.hidden = ntp === "strip";
+      btnNewTab.setAttribute("aria-hidden", ntp === "strip" ? "true" : "false");
+    }
+    if (btnNewTabStrip) {
+      btnNewTabStrip.hidden = ntp === "header";
+      btnNewTabStrip.setAttribute("aria-hidden", ntp === "header" ? "true" : "false");
+    }
+    if (!tb.translate) closeTranslatePanel();
   }
 
   function syncYoutubeAdSkipAdblockState() {
@@ -607,6 +740,49 @@
       return p.endsWith("/" + HOME_FILE) || p.endsWith(HOME_FILE);
     } catch {
       return false;
+    }
+  }
+
+  function effectiveChromeShade() {
+    const theme = appSettings.shellTheme || "dark";
+    if (theme === "light") return "light";
+    if (theme === "system") {
+      return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    }
+    return "dark";
+  }
+
+  function buildWelcomeThemeInjectionString() {
+    const shade = effectiveChromeShade();
+    const hex =
+      appSettings.shellAccent && /^#[0-9a-fA-F]{6}$/.test(String(appSettings.shellAccent).trim())
+        ? String(appSettings.shellAccent).trim().toLowerCase()
+        : "#6eb5ff";
+    const { r, g, b } = shellAccentRgb(hex);
+    const shadeJson = JSON.stringify(shade);
+    const hexJson = JSON.stringify(hex);
+    return `(function(){try{var d=document.documentElement;d.setAttribute("data-welcome-shade",${shadeJson});d.style.setProperty("--accent",${hexJson});d.style.setProperty("--accent-r","${r}");d.style.setProperty("--accent-g","${g}");d.style.setProperty("--accent-b","${b}");}catch(_){}})();`;
+  }
+
+  function injectWelcomeThemeIntoWebview(webview) {
+    if (!webview || typeof webview.executeJavaScript !== "function") return;
+    let url = "";
+    try {
+      url = webview.getURL() || "";
+    } catch {
+      return;
+    }
+    if (!isWelcomePageUrl(url)) return;
+    try {
+      void webview.executeJavaScript(buildWelcomeThemeInjectionString(), false);
+    } catch {
+      /* */
+    }
+  }
+
+  function syncWelcomeThemeInAllTabs() {
+    for (const tab of tabs) {
+      if (tab.el) injectWelcomeThemeIntoWebview(tab.el);
     }
   }
 
@@ -896,8 +1072,10 @@
   function closeTabGroupRenameDialog() {
     tabGroupRenameGid = null;
     if (tabGroupRenamePanel) {
+      const wasVisible = !tabGroupRenamePanel.hidden;
       tabGroupRenamePanel.hidden = true;
       tabGroupRenamePanel.setAttribute("aria-hidden", "true");
+      if (wasVisible) scheduleRestoreGuestFocus();
     }
   }
 
@@ -1021,8 +1199,10 @@
   function hideTabContextMenu() {
     tabCtxTargetId = null;
     if (tabCtxMenu) {
+      const wasVisible = !tabCtxMenu.hidden;
       tabCtxMenu.hidden = true;
       tabCtxMenu.innerHTML = "";
+      if (wasVisible) scheduleRestoreGuestFocus();
     }
   }
 
@@ -1188,6 +1368,7 @@
     if (!sessionRestorePanel || sessionRestorePanel.hidden) return;
     sessionRestorePanel.hidden = true;
     sessionRestorePanel.setAttribute("aria-hidden", "true");
+    scheduleRestoreGuestFocus();
   }
 
   function openSessionRestorePanel(saved) {
@@ -1458,6 +1639,7 @@
     if (!changelogPanel || changelogPanel.hidden) return;
     changelogPanel.hidden = true;
     changelogPanel.setAttribute("aria-hidden", "true");
+    scheduleRestoreGuestFocus();
   }
 
   /** @type {object | null} */
@@ -1467,7 +1649,7 @@
     if (!permissionPromptPanel || permissionPromptPanel.hidden) return;
     permissionPromptPanel.hidden = true;
     permissionPromptPanel.setAttribute("aria-hidden", "true");
-    queueMicrotask(() => focusActiveWebviewGuest({ forWindow: true }));
+    scheduleRestoreGuestFocus();
   }
 
   function rejectActivePermissionIfAny() {
@@ -1596,7 +1778,7 @@
     if (!passwordSaveOfferPanel || passwordSaveOfferPanel.hidden) return;
     passwordSaveOfferPanel.hidden = true;
     passwordSaveOfferPanel.setAttribute("aria-hidden", "true");
-    queueMicrotask(() => focusActiveWebviewGuest({ forWindow: true }));
+    scheduleRestoreGuestFocus();
   }
 
   function scheduleSessionVaultOfferCheck(tabId) {
@@ -1766,6 +1948,7 @@
       vaultUnlockError.hidden = true;
       vaultUnlockError.textContent = "";
     }
+    scheduleRestoreGuestFocus();
   }
 
   function vaultOriginLabel(entry) {
@@ -2305,6 +2488,7 @@
     if (!historyPanel || historyPanel.hidden) return;
     historyPanel.hidden = true;
     historyPanel.setAttribute("aria-hidden", "true");
+    scheduleRestoreGuestFocus();
   }
 
   function toggleHistoryPanel() {
@@ -2317,6 +2501,7 @@
     if (!sitePermPanel || sitePermPanel.hidden) return;
     sitePermPanel.hidden = true;
     sitePermPanel.setAttribute("aria-hidden", "true");
+    scheduleRestoreGuestFocus();
   }
 
   async function refreshSitePermPanel() {
@@ -2556,6 +2741,25 @@
       const want = s.activeProfileId || "default";
       ps.value = plist.some((x) => x && x.id === want) ? want : "default";
     }
+    const st = document.getElementById("settings-shell-theme");
+    if (st) st.value = s.shellTheme === "light" || s.shellTheme === "system" ? s.shellTheme : "dark";
+    const sac = document.getElementById("settings-shell-accent");
+    if (sac) sac.value = s.shellAccent && /^#[0-9a-fA-F]{6}$/.test(s.shellAccent) ? s.shellAccent : "#6eb5ff";
+    const sd = document.getElementById("settings-shell-density");
+    if (sd) sd.value = s.shellDensity === "compact" ? "compact" : "comfortable";
+    const bm = document.getElementById("settings-bookmarks-bar-mode");
+    if (bm) bm.value = s.bookmarksBarMode === "always" || s.bookmarksBarMode === "never" ? s.bookmarksBarMode : "auto";
+    const ntp = document.getElementById("settings-new-tab-placement");
+    if (ntp) {
+      const p = s.newTabButtonPlacement;
+      ntp.value = p === "header" || p === "strip" ? p : "both";
+    }
+    const tbb = s.toolbarButtons || {};
+    chk("settings-tb-home", tbb.home !== false);
+    chk("settings-tb-bookmark", tbb.bookmark !== false);
+    chk("settings-tb-site-perm", tbb.sitePerm !== false);
+    chk("settings-tb-translate", tbb.translate !== false);
+    chk("settings-tb-zoom-reset", tbb.zoomReset !== false);
   }
 
   function gatherSettingsPatchFromForm() {
@@ -2584,6 +2788,13 @@
       const v = ps.value.trim().toLowerCase();
       if ((appSettings.profiles || []).some((p) => p && p.id === v)) activeProfileId = v;
     }
+    const tb = {
+      home: !!(document.getElementById("settings-tb-home")?.checked),
+      bookmark: !!(document.getElementById("settings-tb-bookmark")?.checked),
+      sitePerm: !!(document.getElementById("settings-tb-site-perm")?.checked),
+      translate: !!(document.getElementById("settings-tb-translate")?.checked),
+      zoomReset: !!(document.getElementById("settings-tb-zoom-reset")?.checked),
+    };
     return {
       adblockEnabled: !!(document.getElementById("settings-adblock-enabled")?.checked),
       forceDarkMode: !!(document.getElementById("settings-force-dark-mode")?.checked),
@@ -2593,6 +2804,24 @@
           : "google-wrap",
       translateLibreUrl: String(document.getElementById("settings-translate-libre-url")?.value || "").trim(),
       activeProfileId,
+      shellTheme: (() => {
+        const v = document.getElementById("settings-shell-theme")?.value || "dark";
+        return v === "light" || v === "system" ? v : "dark";
+      })(),
+      shellAccent: (() => {
+        const raw = String(document.getElementById("settings-shell-accent")?.value || "").trim();
+        return /^#[0-9a-fA-F]{6}$/.test(raw) ? raw.toLowerCase() : "#6eb5ff";
+      })(),
+      shellDensity: document.getElementById("settings-shell-density")?.value === "compact" ? "compact" : "comfortable",
+      bookmarksBarMode: (() => {
+        const v = document.getElementById("settings-bookmarks-bar-mode")?.value || "auto";
+        return v === "always" || v === "never" ? v : "auto";
+      })(),
+      toolbarButtons: tb,
+      newTabButtonPlacement: (() => {
+        const v = document.getElementById("settings-new-tab-placement")?.value || "both";
+        return v === "header" || v === "strip" ? v : "both";
+      })(),
       searchSuggestions: {
         enablePastSearch: chk("settings-ss-past"),
         enableBookmarks: chk("settings-ss-bookmarks"),
@@ -2668,6 +2897,7 @@
     closeVaultPanel();
     settingsPanel.hidden = true;
     settingsPanel.setAttribute("aria-hidden", "true");
+    scheduleRestoreGuestFocus();
   }
 
   function openSettingsPanel() {
@@ -2711,6 +2941,9 @@
       appSettings = normalizeAppSettings({ ...appSettings, ...patch });
     }
     syncYoutubeAdSkipAdblockState();
+    applyShellAppearance();
+    syncChromeLayoutFromSettings();
+    renderBookmarksBar();
     closeSettingsPanel();
     refreshOmniboxSuggestions();
     void refreshTranslationKeyStatus();
@@ -2782,10 +3015,23 @@
 
   function renderBookmarksBar() {
     bookmarksBar.replaceChildren();
-    if (bookmarks.length === 0) {
+    const mode = appSettings.bookmarksBarMode || "auto";
+    if (mode === "never") {
       bookmarksBar.hidden = true;
+      bookmarksBar.classList.remove("bookmarks-bar--empty-visible");
       return;
     }
+    if (bookmarks.length === 0) {
+      if (mode === "always") {
+        bookmarksBar.hidden = false;
+        bookmarksBar.classList.add("bookmarks-bar--empty-visible");
+      } else {
+        bookmarksBar.hidden = true;
+        bookmarksBar.classList.remove("bookmarks-bar--empty-visible");
+      }
+      return;
+    }
+    bookmarksBar.classList.remove("bookmarks-bar--empty-visible");
     bookmarksBar.hidden = false;
     for (const b of bookmarks) {
       const chip = document.createElement("button");
@@ -2876,8 +3122,8 @@
         on = false;
       }
     }
-    btnBookmark.classList.toggle("is-bookmarked", on);
-    btnBookmark.setAttribute("aria-pressed", on ? "true" : "false");
+    btnBookmark?.classList.toggle("is-bookmarked", on);
+    btnBookmark?.setAttribute("aria-pressed", on ? "true" : "false");
   }
 
   function toggleBookmarkCurrent() {
@@ -3440,6 +3686,7 @@
     if (settingsPanel && !settingsPanel.hidden) return true;
     if (historyPanel && !historyPanel.hidden) return true;
     if (sitePermPanel && !sitePermPanel.hidden) return true;
+    if (translatePanel && !translatePanel.hidden) return true;
     if (!findBar.hidden && (ae === findInput || ae?.closest?.("#find-bar"))) return true;
     if (tabGroupRenamePanel && !tabGroupRenamePanel.hidden) return true;
     if (tabCtxMenu && !tabCtxMenu.hidden) return true;
@@ -3456,6 +3703,7 @@
     if (settingsPanel && !settingsPanel.hidden) return true;
     if (historyPanel && !historyPanel.hidden) return true;
     if (sitePermPanel && !sitePermPanel.hidden) return true;
+    if (translatePanel && !translatePanel.hidden) return true;
     if (ae === urlInput || ae?.closest?.(".omnibox-wrap")) return true;
     if (!findBar.hidden) {
       if (ae === findInput || ae?.closest?.("#find-bar")) return true;
@@ -3478,9 +3726,25 @@
     if (!w) return;
     try {
       w.focus();
+      const gid = typeof w.getWebContentsId === "function" ? w.getWebContentsId() : 0;
+      if (gid > 0 && typeof window.nebula?.focusGuestWebContents === "function") {
+        window.setTimeout(() => {
+          void window.nebula.focusGuestWebContents(gid);
+        }, 0);
+      }
     } catch {
       /* guest not ready */
     }
+  }
+
+  /** After shell UI or blocking dialogs, Chromium often leaves keyboard focus off the guest until the window blurs. */
+  function scheduleRestoreGuestFocus() {
+    requestAnimationFrame(() => {
+      queueMicrotask(() => {
+        if (shouldDeferWebviewFocusFromWindow()) return;
+        focusActiveWebviewGuest({ forWindow: true });
+      });
+    });
   }
 
   function applySplitRatioStyles() {
@@ -3830,6 +4094,7 @@
     findBar.hidden = true;
     stopFindOnWebview(getActiveWebview());
     findStatus.textContent = "";
+    scheduleRestoreGuestFocus();
   }
 
   let findDebounceTimer = null;
@@ -4182,8 +4447,10 @@
 
   function hideUpdateBanner() {
     if (!updateBanner) return;
+    const wasVisible = !updateBanner.hidden;
     updateBanner.hidden = true;
     updateBanner.setAttribute("aria-hidden", "true");
+    if (wasVisible) scheduleRestoreGuestFocus();
   }
 
   const GOOGLE_TRANSLATE_HOST_RE = /(^|\.)translate\.google\.com$/i;
@@ -4216,8 +4483,10 @@
 
   function setTranslatePanelOpen(open) {
     if (!translatePanel || !btnTranslate) return;
+    const wasOpen = !translatePanel.hidden;
     translatePanel.hidden = !open;
     btnTranslate.setAttribute("aria-expanded", open ? "true" : "false");
+    if (!open && wasOpen) scheduleRestoreGuestFocus();
     if (open) {
       ensureTranslateLangSelect();
       const hint = document.getElementById("translate-panel-hint");
@@ -4793,6 +5062,7 @@
       else findStatus.textContent = `${cur} of ${total}`;
     });
     el.addEventListener("did-finish-load", () => {
+      injectWelcomeThemeIntoWebview(el);
       if (activeId === id) {
         syncOmniboxFromWebview();
         setNavButtons();
@@ -5670,13 +5940,72 @@
 
   if (window.nebula?.onRefocusActiveWebview) {
     window.nebula.onRefocusActiveWebview(() => {
-      queueMicrotask(() => focusActiveWebviewGuest({ forWindow: true }));
+      scheduleRestoreGuestFocus();
     });
   }
 
   window.addEventListener("focus", () => {
-    queueMicrotask(() => focusActiveWebviewGuest({ forWindow: true }));
+    scheduleRestoreGuestFocus();
   });
+
+  (function patchBlockingDialogsForGuestFocus() {
+    try {
+      const nativeAlert = window.alert.bind(window);
+      const nativeConfirm = window.confirm.bind(window);
+      const nativePrompt = window.prompt.bind(window);
+
+      function guestWebContentsIdForSyncDialog() {
+        const w = getActiveWebview();
+        if (!w || typeof w.getWebContentsId !== "function") return 0;
+        try {
+          return w.getWebContentsId();
+        } catch {
+          return 0;
+        }
+      }
+
+      window.alert = function nebulaAlert(message) {
+        if (typeof window.nebula?.syncDialog === "function") {
+          window.nebula.syncDialog({
+            kind: "alert",
+            message: String(message ?? ""),
+            guestWebContentsId: guestWebContentsIdForSyncDialog(),
+          });
+          return;
+        }
+        try {
+          return nativeAlert(message);
+        } finally {
+          scheduleRestoreGuestFocus();
+        }
+      };
+
+      window.confirm = function nebulaConfirm(message) {
+        if (typeof window.nebula?.syncDialog === "function") {
+          return !!window.nebula.syncDialog({
+            kind: "confirm",
+            message: String(message ?? ""),
+            guestWebContentsId: guestWebContentsIdForSyncDialog(),
+          });
+        }
+        try {
+          return nativeConfirm(message);
+        } finally {
+          scheduleRestoreGuestFocus();
+        }
+      };
+
+      window.prompt = function nebulaPrompt(message, defaultText) {
+        try {
+          return nativePrompt(message, defaultText);
+        } finally {
+          scheduleRestoreGuestFocus();
+        }
+      };
+    } catch {
+      /* */
+    }
+  })();
 
   wireSplitDropZones();
   wireSplitResizer();
@@ -5687,6 +6016,8 @@
   });
 
   syncYoutubeAdSkipAdblockState();
+  applyShellAppearance();
+  syncChromeLayoutFromSettings();
   void loadAppSettings().then(() => {
     bookmarks = loadBookmarksFromStorage();
     renderBookmarksBar();
