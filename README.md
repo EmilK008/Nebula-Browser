@@ -1,6 +1,6 @@
 # Nebula
 
-**Nebula** is a desktop web browser built with [Electron](https://www.electronjs.org/) and a custom window chrome: tabs, address bar, bookmarks, downloads, and settings live in a tailored UI around Chromium-powered `<webview>` tabs. It targets people who want a focused browsing shell with strong local-first controls (profiles, optional ad blocking, vault, and optional AI tools).
+**Nebula** is a desktop web browser built in cursor by composer 2 with [Electron](https://www.electronjs.org/) and a custom window chrome: tabs, address bar, bookmarks, downloads, and settings live in a tailored UI around Chromium-powered `<webview>` tabs. It targets people who want a focused browsing shell with strong local-first controls (profiles, optional ad blocking, vault, and optional AI tools).
 
 This repository is the **nebula-browser** app (`com.nebula.browser`). Releases and updates are tracked on GitHub (`EmilK008/Nebula-Browser` per `package.json`).
 
