@@ -1,6 +1,19 @@
 {
   "entries": [
     {
+      "version": "1.0.1",
+      "date": "2026-05-22",
+      "added": [
+        "Pinned tabs (tab strip): pin or unpin from the tab context menu or Tab → Pin or unpin tab. Pinned tabs stay on the left, are excluded from tab groups, and persist across session restore. Private tabs cannot be pinned.",
+        "Settings → Keyboard shortcuts: a reference table for the main menu accelerators (Ctrl/Cmd shortcuts).",
+        "Settings → Site permission overrides: a sortable list of origins with custom camera/mic/location/etc. rules and a Clear action per site.",
+        "Print and save as PDF for the active tab: View → Print… (Ctrl or Cmd + P) and View → Save Page as PDF… (uses the system print dialog or a save dialog for PDF)."
+      ],
+      "fixes": [
+        "fixed tab groups breaking when there are more then 2 tabs in a group"
+      ]
+    },
+    {
       "version": "1.0.0",
       "date": "2026-05-17",
       "added": [

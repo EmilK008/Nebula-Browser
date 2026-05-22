@@ -3779,6 +3779,69 @@ ipcMain.handle("nebula-set-site-permissions", (_e, payload) => {
   return { ok: true };
 });
 
+ipcMain.handle("nebula-site-permissions-list-origins", () => {
+  const origins = Object.keys(sitePermissionsState.origins || {}).sort();
+  const rows = origins.map((origin) => ({
+    origin,
+    rules: { ...(sitePermissionsState.origins[origin] || {}) },
+  }));
+  return { ok: true, rows };
+});
+
+ipcMain.handle("nebula-site-permissions-clear-origin", (_e, payload) => {
+  const origin = typeof payload?.origin === "string" ? payload.origin.trim() : "";
+  if (!origin) return { ok: false, error: "Missing origin." };
+  if (sitePermissionsState.origins[origin]) {
+    delete sitePermissionsState.origins[origin];
+    saveSitePermissionsState();
+  }
+  return { ok: true };
+});
+
+ipcMain.handle("nebula-guest-print", async (_e, payload) => {
+  const gid = Number(payload?.guestWebContentsId);
+  const wc = webContents.fromId(gid);
+  if (!wc || wc.isDestroyed()) return { ok: false, error: "Nothing to print." };
+  try {
+    const ret = wc.print({ silent: false, printBackground: true });
+    if (ret && typeof ret.then === "function") await ret;
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: String(err?.message || err) };
+  }
+});
+
+ipcMain.handle("nebula-guest-save-pdf", async (event, payload) => {
+  const gid = Number(payload?.guestWebContentsId);
+  const wc = webContents.fromId(gid);
+  if (!wc || wc.isDestroyed()) return { ok: false, error: "Nothing to save." };
+  let data;
+  try {
+    data = await wc.printToPDF({ printBackground: true });
+  } catch (err) {
+    return { ok: false, error: String(err?.message || err) };
+  }
+  const win = BrowserWindow.fromWebContents(event.sender);
+  let base = "page";
+  try {
+    base = sanitizeDownloadFilename(wc.getTitle() || "page");
+  } catch {
+    base = "page";
+  }
+  const { canceled, filePath } = await dialog.showSaveDialog(win || undefined, {
+    title: "Save as PDF",
+    defaultPath: `${base}.pdf`,
+    filters: [{ name: "PDF", extensions: ["pdf"] }],
+  });
+  if (canceled || !filePath) return { ok: false, canceled: true };
+  try {
+    fs.writeFileSync(filePath, data);
+    return { ok: true, path: filePath };
+  } catch (err) {
+    return { ok: false, error: String(err?.message || err) };
+  }
+});
+
 /** —— Local Nebula account (master password to view / copy vault secrets) */
 
 const NEBULA_ACCOUNT_MIN_LENGTH = 8;
@@ -5283,6 +5346,10 @@ function registerAppMenu() {
       accelerator: "CmdOrCtrl+Shift+T",
       click: (_e, bw) => dispatchAction(bw, "reopen-tab"),
     },
+    {
+      label: "Pin or unpin tab",
+      click: (_e, bw) => dispatchAction(bw, "toggle-pin-tab"),
+    },
   ];
 
   const navigateItems = [
@@ -5308,6 +5375,16 @@ function registerAppMenu() {
       label: "Reload Page",
       accelerator: "CmdOrCtrl+R",
       click: (_e, bw) => dispatchAction(bw, "reload"),
+    },
+    { type: "separator" },
+    {
+      label: "Print…",
+      accelerator: "CmdOrCtrl+P",
+      click: (_e, bw) => dispatchAction(bw, "print-page"),
+    },
+    {
+      label: "Save Page as PDF…",
+      click: (_e, bw) => dispatchAction(bw, "save-page-pdf"),
     },
     { type: "separator" },
     {

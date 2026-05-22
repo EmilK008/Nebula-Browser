@@ -820,6 +820,109 @@
                 <span>Zoom reset (100%)</span>
               </label>
             </section>
+            <section class="settings-section settings-shortcuts-section">
+              <h3 class="settings-section-title">Keyboard shortcuts</h3>
+              <p class="settings-hint">
+                These match the in-app menu (Tab, Navigate, View, Bookmarks, Edit). On macOS, use <kbd class="settings-kbd">⌘</kbd> where this table shows
+                <kbd class="settings-kbd">Ctrl</kbd>.
+              </p>
+              <div class="settings-shortcuts-scroll">
+                <table class="settings-shortcuts-table" aria-label="Keyboard shortcuts">
+                  <thead>
+                    <tr>
+                      <th scope="col">Action</th>
+                      <th scope="col">Shortcut</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td>New tab</td>
+                      <td><kbd class="settings-kbd">Ctrl</kbd>+<kbd class="settings-kbd">T</kbd></td>
+                    </tr>
+                    <tr>
+                      <td>New private tab</td>
+                      <td><kbd class="settings-kbd">Ctrl</kbd>+<kbd class="settings-kbd">Shift</kbd>+<kbd class="settings-kbd">N</kbd></td>
+                    </tr>
+                    <tr>
+                      <td>Close tab</td>
+                      <td><kbd class="settings-kbd">Ctrl</kbd>+<kbd class="settings-kbd">W</kbd></td>
+                    </tr>
+                    <tr>
+                      <td>Reopen closed tab</td>
+                      <td><kbd class="settings-kbd">Ctrl</kbd>+<kbd class="settings-kbd">Shift</kbd>+<kbd class="settings-kbd">T</kbd></td>
+                    </tr>
+                    <tr>
+                      <td>Pin or unpin tab</td>
+                      <td>Tab → Pin or unpin tab</td>
+                    </tr>
+                    <tr>
+                      <td>Back</td>
+                      <td><kbd class="settings-kbd">Alt</kbd>+<kbd class="settings-kbd">←</kbd> (Windows) · <kbd class="settings-kbd">⌘</kbd>+<kbd class="settings-kbd">[</kbd> (macOS)</td>
+                    </tr>
+                    <tr>
+                      <td>Forward</td>
+                      <td><kbd class="settings-kbd">Alt</kbd>+<kbd class="settings-kbd">→</kbd> (Windows) · <kbd class="settings-kbd">⌘</kbd>+<kbd class="settings-kbd">]</kbd> (macOS)</td>
+                    </tr>
+                    <tr>
+                      <td>Home</td>
+                      <td><kbd class="settings-kbd">Alt</kbd>+<kbd class="settings-kbd">Home</kbd></td>
+                    </tr>
+                    <tr>
+                      <td>Reload</td>
+                      <td><kbd class="settings-kbd">Ctrl</kbd>+<kbd class="settings-kbd">R</kbd></td>
+                    </tr>
+                    <tr>
+                      <td>Print</td>
+                      <td><kbd class="settings-kbd">Ctrl</kbd>+<kbd class="settings-kbd">P</kbd></td>
+                    </tr>
+                    <tr>
+                      <td>Save page as PDF</td>
+                      <td>View → Save Page as PDF…</td>
+                    </tr>
+                    <tr>
+                      <td>Picture in picture</td>
+                      <td><kbd class="settings-kbd">Ctrl</kbd>+<kbd class="settings-kbd">Shift</kbd>+<kbd class="settings-kbd">P</kbd></td>
+                    </tr>
+                    <tr>
+                      <td>Read selection aloud</td>
+                      <td><kbd class="settings-kbd">Ctrl</kbd>+<kbd class="settings-kbd">Shift</kbd>+<kbd class="settings-kbd">U</kbd></td>
+                    </tr>
+                    <tr>
+                      <td>Find in page</td>
+                      <td><kbd class="settings-kbd">Ctrl</kbd>+<kbd class="settings-kbd">F</kbd></td>
+                    </tr>
+                    <tr>
+                      <td>History</td>
+                      <td><kbd class="settings-kbd">Ctrl</kbd>+<kbd class="settings-kbd">H</kbd> (Windows) · <kbd class="settings-kbd">⌘</kbd>+<kbd class="settings-kbd">Shift</kbd>+<kbd class="settings-kbd">H</kbd> (macOS)</td>
+                    </tr>
+                    <tr>
+                      <td>Saved passwords</td>
+                      <td><kbd class="settings-kbd">Ctrl</kbd>+<kbd class="settings-kbd">Shift</kbd>+<kbd class="settings-kbd">L</kbd></td>
+                    </tr>
+                    <tr>
+                      <td>Zoom in / out / reset</td>
+                      <td>
+                        <kbd class="settings-kbd">Ctrl</kbd>+<kbd class="settings-kbd">+</kbd> ·
+                        <kbd class="settings-kbd">Ctrl</kbd>+<kbd class="settings-kbd">-</kbd> ·
+                        <kbd class="settings-kbd">Ctrl</kbd>+<kbd class="settings-kbd">0</kbd>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td>Settings</td>
+                      <td><kbd class="settings-kbd">Ctrl</kbd>+<kbd class="settings-kbd">,</kbd></td>
+                    </tr>
+                    <tr>
+                      <td>Bookmark this page</td>
+                      <td><kbd class="settings-kbd">Ctrl</kbd>+<kbd class="settings-kbd">D</kbd></td>
+                    </tr>
+                    <tr>
+                      <td>Focus address bar</td>
+                      <td><kbd class="settings-kbd">Ctrl</kbd>+<kbd class="settings-kbd">L</kbd></td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </section>
             <section class="settings-section">
               <h3 class="settings-section-title">Translation</h3>
               <label class="settings-field">
@@ -1146,6 +1249,26 @@
                 </div>
               </div>
               <p id="nebula-account-settings-msg" class="settings-hint" role="status"></p>
+            </section>
+            <section class="settings-section">
+              <h3 class="settings-section-title">Site permission overrides</h3>
+              <p class="settings-hint">
+                Sites where you changed camera, microphone, location, notifications, screen capture, or third-party cookies from the app default. Clearing a row removes only that site’s custom rules (defaults in the Site permissions panel are unchanged).
+              </p>
+              <p id="settings-site-perm-summary-msg" class="settings-hint" role="status" hidden></p>
+              <p id="settings-site-perm-summary-empty" class="settings-hint"></p>
+              <div id="settings-site-perm-summary-wrap" class="settings-site-perm-summary-wrap" hidden>
+                <table class="settings-shortcuts-table settings-site-perm-table" aria-label="Sites with custom permissions">
+                  <thead>
+                    <tr>
+                      <th scope="col">Site (origin)</th>
+                      <th scope="col">Overrides</th>
+                      <th scope="col"></th>
+                    </tr>
+                  </thead>
+                  <tbody id="settings-site-perm-summary-tbody"></tbody>
+                </table>
+              </div>
             </section>
             <section class="settings-section">
               <h3 class="settings-section-title">About</h3>

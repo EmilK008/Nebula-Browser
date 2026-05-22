@@ -92,6 +92,11 @@ contextBridge.exposeInMainWorld("nebula", {
   saveBookmarkExportFile: (payload) => ipcRenderer.invoke("nebula-save-bookmark-export-file", payload),
   getSitePermissions: (pageUrl) => ipcRenderer.invoke("nebula-get-site-permissions", { pageUrl }),
   setSitePermissions: (payload) => ipcRenderer.invoke("nebula-set-site-permissions", payload),
+  listSitePermissionOrigins: () => ipcRenderer.invoke("nebula-site-permissions-list-origins"),
+  clearSitePermissionOrigin: (origin) =>
+    ipcRenderer.invoke("nebula-site-permissions-clear-origin", { origin }),
+  guestPrint: (payload) => ipcRenderer.invoke("nebula-guest-print", payload ?? {}),
+  guestSavePdf: (payload) => ipcRenderer.invoke("nebula-guest-save-pdf", payload ?? {}),
   vaultList: () => ipcRenderer.invoke("nebula-vault-list"),
   vaultStatus: () => ipcRenderer.invoke("nebula-vault-status"),
   vaultAdd: (row) => ipcRenderer.invoke("nebula-vault-add", row),

@@ -1583,6 +1583,7 @@
       if (!raw) return null;
       const p = JSON.parse(raw);
       if (!p || typeof p !== "object" || !Array.isArray(p.tabs)) return null;
+      if (p.version === 3 && typeof p.version === "number") return p;
       if (p.version === 2 && typeof p.version === "number") return p;
       if (p.version === 1 && typeof p.version === "number") return p;
       return null;
@@ -1628,6 +1629,47 @@
 
   function pruneUnusedTabGroups() {
     tabGroups = tabGroups.filter((g) => tabs.some((t) => t.groupId === g.id));
+  }
+
+  /**
+   * After drag/drop or other moves, tabs with the same groupId can end up non-adjacent in `tabs`.
+   * syncTabStripDom would then treat them as two runs and dedupeSplitTabGroupRuns renames the second
+   * run to a new group (looks like "only two tabs in the group"). Pull each group's members into one
+   * contiguous block in original left-to-right order.
+   */
+  function consolidateTabGroupsInTabsArray() {
+    const knownIds = new Set(tabGroups.map((g) => g.id));
+    const consumed = new Set();
+    const next = [];
+    for (let i = 0; i < tabs.length; i++) {
+      if (consumed.has(i)) continue;
+      const t = tabs[i];
+      const gid = t.groupId;
+      if (!gid || !knownIds.has(gid)) {
+        if (gid) t.groupId = null;
+        next.push(t);
+        continue;
+      }
+      const members = [];
+      for (let j = 0; j < tabs.length; j++) {
+        if (consumed.has(j)) continue;
+        if (tabs[j].groupId === gid) {
+          members.push(tabs[j]);
+          consumed.add(j);
+        }
+      }
+      for (const m of members) next.push(m);
+    }
+    if (next.length !== tabs.length) return;
+    let same = true;
+    for (let i = 0; i < tabs.length; i++) {
+      if (tabs[i] !== next[i]) {
+        same = false;
+        break;
+      }
+    }
+    if (same) return;
+    tabs.splice(0, tabs.length, ...next);
   }
 
   function dedupeSplitTabGroupRuns() {
@@ -1711,6 +1753,7 @@
   function syncTabStripDom() {
     if (!tabsStrip || !btnNewTabStrip) return;
     pruneUnusedTabGroups();
+    consolidateTabGroupsInTabsArray();
     const keep = new Set([btnNewTabStrip]);
     if (tabReorderIndicator && tabsStrip.contains(tabReorderIndicator)) keep.add(tabReorderIndicator);
     for (const n of Array.from(tabsStrip.children)) {
@@ -1784,10 +1827,70 @@
     let to = ins;
     if (from < to) to--;
     tabs.splice(to, 0, row);
+    normalizeTabsPinnedOrder();
     dedupeSplitTabGroupRuns();
     pruneUnusedTabGroups();
     syncTabStripDom();
     scheduleSaveSessionSnapshot();
+  }
+
+  function normalizeTabsPinnedOrder() {
+    const pinned = [];
+    const unpinned = [];
+    for (const t of tabs) {
+      if (t.pinned) {
+        if (t.groupId) t.groupId = null;
+        pinned.push(t);
+      } else {
+        unpinned.push(t);
+      }
+    }
+    tabs.splice(0, tabs.length, ...pinned, ...unpinned);
+  }
+
+  function tabAllowsPinToggle(t) {
+    return !!(t && !t.isPrivate && (!t.groupId || t.pinned));
+  }
+
+  function applyPinnedTabChrome(t) {
+    if (!t || !t.tabEl) return;
+    if (t.pinned) {
+      t.tabEl.classList.add("tab--pinned");
+      t.tabEl.title =
+        "Pinned tab — stays on the left; drag to reorder with other pinned tabs. Right-click for menu.";
+    } else {
+      t.tabEl.classList.remove("tab--pinned");
+      t.tabEl.title = t.isPrivate
+        ? "Private tab — cookies and site data are cleared when you close Nebula. Not included in session restore. Drag to reorder…"
+        : "Drag to reorder · drop on a group header to join it · drop outside groups to leave · right-click for menu";
+    }
+  }
+
+  function setTabPinned(tabId, wantPinned) {
+    const t = tabs.find((x) => x.id === tabId);
+    if (!t || !tabAllowsPinToggle(t)) return;
+    const next = !!wantPinned;
+    if (t.pinned === next) return;
+    t.pinned = next;
+    if (t.pinned) t.groupId = null;
+    applyPinnedTabChrome(t);
+    normalizeTabsPinnedOrder();
+    dedupeSplitTabGroupRuns();
+    pruneUnusedTabGroups();
+    syncTabStripDom();
+    scheduleSaveSessionSnapshot();
+  }
+
+  function togglePinTabForActive() {
+    const t = tabs.find((x) => x.id === activeId);
+    if (!t || !tabAllowsPinToggle(t)) {
+      if (t && t.isPrivate) return;
+      if (t && t.groupId) {
+        alert("Leave the tab group before pinning (or unpin from a pinned tab).");
+      }
+      return;
+    }
+    setTabPinned(t.id, !t.pinned);
   }
 
   function moveTabToEndOfGroup(tabId, gid) {
@@ -1802,6 +1905,7 @@
       }
     }
     tabs.splice(insertAt, 0, row);
+    normalizeTabsPinnedOrder();
   }
 
   function stripInsertIndexFromClientX(clientX) {
@@ -2000,6 +2104,34 @@
       });
       tabCtxMenu.appendChild(b);
     };
+    mk(
+      t?.pinned ? "Unpin tab" : "Pin tab",
+      () => {
+        const cur = tabs.find((x) => x.id === tabId);
+        if (cur) setTabPinned(tabId, !cur.pinned);
+      },
+      !t || !tabAllowsPinToggle(t)
+    );
+    mk(
+      t?.mediaState?.audioMuted ? "Unmute tab" : "Mute tab",
+      () => {
+        void (async () => {
+          const tab = tabs.find((x) => x.id === tabId);
+          if (!tab?.guestWcId || !window.nebula?.setGuestAudioMuted) return;
+          const next = !tab.mediaState.audioMuted;
+          try {
+            const r = await window.nebula.setGuestAudioMuted({ guestWebContentsId: tab.guestWcId, muted: next });
+            if (r?.ok && typeof r.audioMuted === "boolean") {
+              tab.mediaState.audioMuted = r.audioMuted;
+              renderTabMediaIndicators(tab);
+            }
+          } catch {
+            /* */
+          }
+        })();
+      },
+      !t?.guestWcId
+    );
     mk("New tab group", () => newTabGroupFromTab(tabId), false);
     mk("New private tab", () => createTab(homeUrl(), { private: true }), false);
     mk("Remove from group", () => removeTabFromGroup(tabId), !t?.groupId);
@@ -2115,14 +2247,14 @@
         } catch {
           u = "";
         }
-        return { url: u, groupId: t.groupId || null };
+        return { url: u, groupId: t.groupId || null, pinned: !!t.pinned };
       });
       let ai = persistTabs.findIndex((x) => x.id === activeId);
       if (ai < 0) ai = 0;
       if (persistTabs.length > 0 && ai >= persistTabs.length) ai = persistTabs.length - 1;
       const groups = tabGroups.filter((g) => persistTabs.some((t) => t.groupId === g.id));
       const data = {
-        version: 2,
+        version: 3,
         tabs: tabPayload,
         activeIndex: ai,
         groups,
@@ -2201,7 +2333,9 @@
       if (saved.version >= 2 && row && typeof row.groupId === "string" && tabGroups.some((x) => x.id === row.groupId)) {
         gid = row.groupId;
       }
-      created.push(createTab(u, { groupId: gid }));
+      const wantPin = !!(row && row.pinned);
+      if (wantPin) gid = null;
+      created.push(createTab(u, { groupId: gid, pinned: wantPin }));
     }
     if (created.length === 0) {
       finishStartupWithFreshHome();
@@ -3436,6 +3570,7 @@
         origin,
         patch: { [key]: value },
       });
+      if (settingsPanel && !settingsPanel.hidden) void refreshSitePermissionSummary();
     } catch {
       /* ignore */
     }
@@ -3799,6 +3934,7 @@
     void refreshAboutSection();
     void refreshTranslationKeyStatus();
     void refreshAiKeyStatus();
+    void refreshSitePermissionSummary();
     queueMicrotask(() => document.getElementById("settings-adblock-enabled")?.focus());
   }
 
@@ -3866,6 +4002,157 @@
       return false;
     }
     return e.ctrlKey && !e.shiftKey;
+  }
+
+  function printShortcutMatch(e) {
+    if (e.repeat) return false;
+    if (e.key !== "p" && e.key !== "P") return false;
+    if (!e.ctrlKey && !e.metaKey) return false;
+    if (e.altKey || e.shiftKey) return false;
+    return true;
+  }
+
+  function shouldSuppressShellPrintShortcut() {
+    if (sessionRestorePanel && !sessionRestorePanel.hidden) return true;
+    if (settingsPanel && !settingsPanel.hidden) return true;
+    if (vaultPanel && !vaultPanel.hidden) return true;
+    if (firstRunPanel && !firstRunPanel.hidden) return true;
+    if (permissionPromptPanel && !permissionPromptPanel.hidden) return true;
+    if (tabGroupRenamePanel && !tabGroupRenamePanel.hidden) return true;
+    const ae = document.activeElement;
+    if (aiDrawer && !aiDrawer.hidden && ae && ae.closest && ae.closest("#ai-drawer")) return true;
+    return false;
+  }
+
+  async function printActivePage() {
+    if (shouldSuppressShellPrintShortcut()) return;
+    const w = getActiveWebview();
+    if (!w || typeof w.getWebContentsId !== "function") {
+      alert("Nothing to print.");
+      return;
+    }
+    let wid = 0;
+    try {
+      wid = w.getWebContentsId() || 0;
+    } catch {
+      wid = 0;
+    }
+    if (!wid || !window.nebula?.guestPrint) return;
+    try {
+      const r = await window.nebula.guestPrint({ guestWebContentsId: wid });
+      if (!r?.ok && r?.error) alert(String(r.error));
+    } catch {
+      alert("Print failed.");
+    }
+  }
+
+  async function saveActivePageAsPdf() {
+    if (shouldSuppressShellPrintShortcut()) return;
+    const w = getActiveWebview();
+    if (!w || typeof w.getWebContentsId !== "function") {
+      alert("Nothing to save.");
+      return;
+    }
+    let wid = 0;
+    try {
+      wid = w.getWebContentsId() || 0;
+    } catch {
+      wid = 0;
+    }
+    if (!wid || !window.nebula?.guestSavePdf) return;
+    try {
+      const r = await window.nebula.guestSavePdf({ guestWebContentsId: wid });
+      if (r?.canceled) return;
+      if (!r?.ok) alert(r?.error ? String(r.error) : "Could not save PDF.");
+    } catch {
+      alert("Could not save PDF.");
+    }
+  }
+
+  const SITE_PERM_RULE_LABELS = {
+    camera: "Camera",
+    microphone: "Microphone",
+    geolocation: "Location",
+    notifications: "Notifications",
+    screenCapture: "Screen capture",
+    midi: "MIDI",
+    thirdPartyCookies: "Third-party cookies",
+  };
+
+  function formatSitePermRulesSummary(rules) {
+    if (!rules || typeof rules !== "object") return "—";
+    const parts = [];
+    for (const [k, v] of Object.entries(rules)) {
+      if (typeof v !== "string" || !v) continue;
+      parts.push(`${SITE_PERM_RULE_LABELS[k] || k}: ${v}`);
+    }
+    return parts.length ? parts.join(" · ") : "—";
+  }
+
+  async function refreshSitePermissionSummary() {
+    const emptyEl = document.getElementById("settings-site-perm-summary-empty");
+    const wrap = document.getElementById("settings-site-perm-summary-wrap");
+    const tbody = document.getElementById("settings-site-perm-summary-tbody");
+    if (!emptyEl || !wrap || !tbody) return;
+    tbody.replaceChildren();
+    emptyEl.textContent = "Loading…";
+    emptyEl.hidden = false;
+    wrap.hidden = true;
+    if (!window.nebula?.listSitePermissionOrigins) {
+      emptyEl.textContent = "Site permission list is only available in the Nebula app.";
+      emptyEl.hidden = false;
+      wrap.hidden = true;
+      return;
+    }
+    try {
+      const r = await window.nebula.listSitePermissionOrigins();
+      const rows = r && Array.isArray(r.rows) ? r.rows : [];
+      if (!rows.length) {
+        emptyEl.textContent = "No sites with custom permission rules yet.";
+        emptyEl.hidden = false;
+        wrap.hidden = true;
+        return;
+      }
+      emptyEl.hidden = true;
+      wrap.hidden = false;
+      for (const row of rows) {
+        const origin = row && typeof row.origin === "string" ? row.origin : "";
+        if (!origin) continue;
+        const tr = document.createElement("tr");
+        const td1 = document.createElement("td");
+        td1.textContent = origin;
+        const td2 = document.createElement("td");
+        td2.textContent = formatSitePermRulesSummary(row.rules);
+        const td3 = document.createElement("td");
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "settings-action-btn";
+        btn.textContent = "Clear";
+        btn.addEventListener("click", async () => {
+          if (!confirm(`Remove custom permission rules for\n${origin} ?`)) return;
+          try {
+            const cr = await window.nebula.clearSitePermissionOrigin(origin);
+            if (!cr?.ok) {
+              alert((cr && cr.error) || "Could not clear.");
+              return;
+            }
+            void refreshSitePermissionSummary();
+            if (sitePermPanel && !sitePermPanel.hidden) void refreshSitePermPanel();
+          } catch {
+            alert("Could not clear.");
+          }
+        });
+        td3.appendChild(btn);
+        tr.appendChild(td1);
+        tr.appendChild(td2);
+        tr.appendChild(td3);
+        tbody.appendChild(tr);
+      }
+    } catch {
+      emptyEl.textContent = "Could not load site permission list.";
+      emptyEl.hidden = false;
+      wrap.hidden = true;
+    }
   }
 
   function loadBookmarksFromStorage() {
@@ -5727,11 +6014,13 @@
   function createTab(initialUrl, opts) {
     const id = "t" + ++idSeq;
     const url = initialUrl || homeUrl();
-    const optGid =
+    const isPrivate = !!(opts && opts.private);
+    const pinned = !!(opts && opts.pinned) && !isPrivate;
+    const optGidRaw =
       opts && opts.groupId && typeof opts.groupId === "string" && tabGroups.some((g) => g.id === opts.groupId)
         ? opts.groupId
         : null;
-    const isPrivate = !!(opts && opts.private);
+    const optGid = pinned ? null : optGidRaw;
     const inheritedPart =
       opts && typeof opts.partition === "string" && opts.partition.trim() ? opts.partition.trim() : null;
     const guestPartition =
@@ -5745,8 +6034,11 @@
     tabEl.dataset.tabId = id;
     tabEl.title = isPrivate
       ? "Private tab — cookies and site data are cleared when you close Nebula. Not included in session restore. Drag to reorder…"
-      : "Drag to reorder · drop on a group header to join it · drop outside groups to leave · right-click for menu";
+      : pinned
+        ? "Pinned tab — stays on the left; drag to reorder with other pinned tabs."
+        : "Drag to reorder · drop on a group header to join it · drop outside groups to leave · right-click for menu";
     if (isPrivate) tabEl.classList.add("tab--private");
+    if (pinned) tabEl.classList.add("tab--pinned");
     const faviconEl = document.createElement("img");
     faviconEl.className = "tab-favicon";
     faviconEl.alt = "";
@@ -5804,6 +6096,7 @@
       guestWcId: null,
       guestPartition,
       isPrivate,
+      pinned,
       translateBackUrl: null,
       translateInPageActive: false,
       translateInPagePollTimer: null,
@@ -6344,6 +6637,9 @@
       case "reopen-tab":
         reopenClosedTab();
         break;
+      case "toggle-pin-tab":
+        togglePinTabForActive();
+        break;
       case "back":
         if (w && w.canGoBack()) w.goBack();
         break;
@@ -6390,6 +6686,12 @@
         break;
       case "find-in-page":
         openFindBar();
+        break;
+      case "print-page":
+        void printActivePage();
+        break;
+      case "save-page-pdf":
+        void saveActivePageAsPdf();
         break;
       case "show-history":
         toggleHistoryPanel();
@@ -7155,6 +7457,13 @@
       if (!e.repeat && (e.key === "n" || e.key === "N") && e.shiftKey && (e.ctrlKey || e.metaKey) && !e.altKey) {
         e.preventDefault();
         createTab(homeUrl(), { private: true });
+        return;
+      }
+      if (!e.repeat && printShortcutMatch(e)) {
+        if (!shouldSuppressShellPrintShortcut()) {
+          e.preventDefault();
+          void printActivePage();
+        }
         return;
       }
       if (settingsShortcutMatch(e)) {
