@@ -20,6 +20,7 @@ const { spawn } = require("child_process");
 const { pipeline } = require("stream/promises");
 const { Readable } = require("stream");
 const nebulaAdblock = require("./adblock");
+const nebulaShortcuts = require("./lib/keyboard-shortcuts");
 
 /** guest `webContents.id` → `<webview partition=…>` string (OAuth popups + window.open must match). */
 const guestPartitionByWcId = new Map();
@@ -1549,6 +1550,12 @@ const DEFAULT_SETTINGS = {
   },
   /** First-launch onboarding; `true` when omitted so upgrades skip the wizard. Fresh installs force `false` in `loadSettings`. */
   firstRunOnboardingDone: true,
+  /** `duckduckgo` | `google` | `bing` | `ai` — omnibox search when input is not a URL. */
+  defaultSearchEngine: "duckduckgo",
+  /** Partial overrides for keyboard shortcut action ids (Electron accelerator strings). */
+  keyboardShortcuts: {},
+  /** When true, a successful vault unlock lasts until Nebula quits (or you lock manually). */
+  vaultKeepUnlockedUntilQuit: false,
 };
 
 /** Allowlisted ids for `nebula-vpn-helper-open-app` (must match renderer catalog). */
@@ -1666,6 +1673,14 @@ function normalizeSettings(s) {
     normalizeNetworkSettings(o);
     normalizeVpnHelperSettings(o);
     if (typeof o.firstRunOnboardingDone !== "boolean") o.firstRunOnboardingDone = DEFAULT_SETTINGS.firstRunOnboardingDone;
+    const enginesEarly = new Set(["duckduckgo", "google", "bing", "ai"]);
+    o.defaultSearchEngine = enginesEarly.has(o.defaultSearchEngine)
+      ? o.defaultSearchEngine
+      : DEFAULT_SETTINGS.defaultSearchEngine;
+    o.keyboardShortcuts = nebulaShortcuts.normalizeShortcutOverrides(o.keyboardShortcuts);
+    if (typeof o.vaultKeepUnlockedUntilQuit !== "boolean") {
+      o.vaultKeepUnlockedUntilQuit = DEFAULT_SETTINGS.vaultKeepUnlockedUntilQuit;
+    }
     return o;
   }
   const layers = ["past", "local", "remote"];
@@ -1701,6 +1716,12 @@ function normalizeSettings(s) {
   normalizeNetworkSettings(o);
   normalizeVpnHelperSettings(o);
   if (typeof o.firstRunOnboardingDone !== "boolean") o.firstRunOnboardingDone = DEFAULT_SETTINGS.firstRunOnboardingDone;
+  const engines = new Set(["duckduckgo", "google", "bing", "ai"]);
+  o.defaultSearchEngine = engines.has(o.defaultSearchEngine) ? o.defaultSearchEngine : DEFAULT_SETTINGS.defaultSearchEngine;
+  o.keyboardShortcuts = nebulaShortcuts.normalizeShortcutOverrides(o.keyboardShortcuts);
+  if (typeof o.vaultKeepUnlockedUntilQuit !== "boolean") {
+    o.vaultKeepUnlockedUntilQuit = DEFAULT_SETTINGS.vaultKeepUnlockedUntilQuit;
+  }
   return o;
 }
 
@@ -1790,14 +1811,48 @@ ipcMain.handle("nebula-get-settings", () => augmentSettingsForRenderer(loadSetti
 ipcMain.handle("nebula-set-settings", (_e, patch) => {
   if (!patch || typeof patch !== "object") return augmentSettingsForRenderer(loadSettings());
   const cur = loadSettings();
-  const next = normalizeSettings(mergeDeep(cur, patch));
+  const replaceKeyboardShortcuts = Object.prototype.hasOwnProperty.call(patch, "keyboardShortcuts");
+  const patchForMerge = replaceKeyboardShortcuts ? { ...patch, keyboardShortcuts: undefined } : patch;
+  const next = normalizeSettings(mergeDeep(cur, patchForMerge));
+  if (replaceKeyboardShortcuts) {
+    next.keyboardShortcuts = nebulaShortcuts.normalizeShortcutOverrides(patch.keyboardShortcuts);
+  }
   saveSettings(next);
+  if (
+    patch &&
+    Object.prototype.hasOwnProperty.call(patch, "vaultKeepUnlockedUntilQuit") &&
+    next.vaultKeepUnlockedUntilQuit === true
+  ) {
+    promoteVaultUnlockToSessionIfEnabled();
+  }
   const bp = browsingPersistPartitionForProfileId(next.activeProfileId);
   const ip = incognitoMemoryPartitionForProfileId(next.activeProfileId);
   nebulaAdblock.applyAdblockFromSettings(next, bp);
   nebulaAdblock.applyAdblockFromSettings(next, ip);
   void applyWebProfileProxyFromSettings(next, bp, ip).catch((e) => console.warn("[Nebula] proxy apply:", e?.message || e));
+  if (patch && typeof patch === "object" && Object.prototype.hasOwnProperty.call(patch, "keyboardShortcuts")) {
+    try {
+      registerAppMenu();
+    } catch (e) {
+      console.warn("[Nebula] menu rebuild:", e?.message || e);
+    }
+  }
   return augmentSettingsForRenderer(next);
+});
+
+ipcMain.handle("nebula-shortcut-manifest", () => {
+  const platform = process.platform;
+  const defaults = nebulaShortcuts.mergeShortcuts({}, platform);
+  return {
+    actions: nebulaShortcuts.SHORTCUT_ACTIONS.map((a) => ({
+      id: a.id,
+      label: a.label,
+      category: a.category,
+      action: a.action,
+      allowEmpty: !!a.allowEmpty,
+    })),
+    defaults,
+  };
 });
 
 function tryLaunchVpnHelperApp(providerId) {
@@ -3602,8 +3657,11 @@ ipcMain.handle("nebula-ai-chat-stream", async (event, payload) => {
       const settings = loadSettings();
       const ai = settings.aiAssistant || DEFAULT_AI_ASSISTANT;
       const braveSec = getBraveSearchApiKeyForSearch();
+      const forceWebSearch = payload?.forceWebSearch === true;
       const useWebSearch =
-        ai.webSearchEnabled === true && !braveSec.locked && String(braveSec.apiKey || "").trim().length > 0;
+        (forceWebSearch || ai.webSearchEnabled === true) &&
+        !braveSec.locked &&
+        String(braveSec.apiKey || "").trim().length > 0;
       const usePageFetch = ai.pageFetchEnabled === true;
       const useTabAgent = ai.tabAgentEnabled === true;
       const assistantToolOptions = {
@@ -3855,6 +3913,8 @@ function nebulaAccountStorePath() {
 
 /** @type {number} */
 let nebulaAccountUnlockUntil = 0;
+/** Session-long unlock when `vaultKeepUnlockedUntilQuit` is enabled. */
+let nebulaAccountSessionUnlockPersistent = false;
 
 function loadNebulaAccountRecord() {
   try {
@@ -3892,16 +3952,45 @@ function verifyNebulaAccountPassword(password) {
 }
 
 function setNebulaAccountUnlockSession() {
-  nebulaAccountUnlockUntil = Date.now() + NEBULA_ACCOUNT_UNLOCK_MS;
+  let keepUntilQuit = false;
+  try {
+    keepUntilQuit = loadSettings().vaultKeepUnlockedUntilQuit === true;
+  } catch {
+    keepUntilQuit = false;
+  }
+  if (keepUntilQuit) {
+    nebulaAccountSessionUnlockPersistent = true;
+    nebulaAccountUnlockUntil = 0;
+  } else {
+    nebulaAccountSessionUnlockPersistent = false;
+    nebulaAccountUnlockUntil = Date.now() + NEBULA_ACCOUNT_UNLOCK_MS;
+  }
 }
 
 function clearNebulaAccountUnlockSession() {
   nebulaAccountUnlockUntil = 0;
+  nebulaAccountSessionUnlockPersistent = false;
 }
 
 function isNebulaVaultSecretsUnlocked() {
   if (!hasNebulaLocalAccount()) return true;
+  if (nebulaAccountSessionUnlockPersistent) return true;
   return Date.now() < nebulaAccountUnlockUntil;
+}
+
+function promoteVaultUnlockToSessionIfEnabled() {
+  if (!hasNebulaLocalAccount()) return;
+  let keepUntilQuit = false;
+  try {
+    keepUntilQuit = loadSettings().vaultKeepUnlockedUntilQuit === true;
+  } catch {
+    keepUntilQuit = false;
+  }
+  if (!keepUntilQuit) return;
+  if (isNebulaVaultSecretsUnlocked()) {
+    nebulaAccountSessionUnlockPersistent = true;
+    nebulaAccountUnlockUntil = 0;
+  }
 }
 
 function saveNebulaAccountPasswordHash(password) {
@@ -3931,11 +4020,20 @@ function deleteNebulaAccountFile() {
 ipcMain.handle("nebula-account-status", () => {
   const hasAccount = hasNebulaLocalAccount();
   const unlocked = isNebulaVaultSecretsUnlocked();
+  let keepUntilQuit = false;
+  try {
+    keepUntilQuit = loadSettings().vaultKeepUnlockedUntilQuit === true;
+  } catch {
+    keepUntilQuit = false;
+  }
   return {
     hasAccount,
     unlocked,
-    unlockExpiresAt: hasAccount && unlocked ? nebulaAccountUnlockUntil : null,
+    unlockExpiresAt:
+      hasAccount && unlocked && !nebulaAccountSessionUnlockPersistent ? nebulaAccountUnlockUntil : null,
     unlockDurationMs: NEBULA_ACCOUNT_UNLOCK_MS,
+    keepUnlockedUntilQuit: keepUntilQuit,
+    sessionUnlock: nebulaAccountSessionUnlockPersistent,
     minPasswordLength: NEBULA_ACCOUNT_MIN_LENGTH,
   };
 });
@@ -5323,146 +5421,58 @@ function attachDownloadHandlers(webSession) {
   });
 }
 
+function menuActionItem(label, action, accel) {
+  /** @type {Electron.MenuItemConstructorOptions} */
+  const item = { label, click: (_e, bw) => dispatchAction(bw, action) };
+  if (accel) item.accelerator = accel;
+  return item;
+}
+
 function registerAppMenu() {
+  const sc = nebulaShortcuts.mergeShortcuts(loadSettings().keyboardShortcuts, process.platform);
+
   const tabItems = [
-    {
-      label: "New Tab",
-      accelerator: "CmdOrCtrl+T",
-      click: (_e, bw) => dispatchAction(bw, "new-tab"),
-    },
-    {
-      label: "New Private Tab",
-      accelerator: "CmdOrCtrl+Shift+N",
-      click: (_e, bw) => dispatchAction(bw, "new-private-tab"),
-    },
-    {
-      label: "Close Tab",
-      accelerator: "CmdOrCtrl+W",
-      click: (_e, bw) => dispatchAction(bw, "close-tab"),
-    },
+    menuActionItem("New Tab", "new-tab", sc["new-tab"]),
+    menuActionItem("New Private Tab", "new-private-tab", sc["new-private-tab"]),
+    menuActionItem("Close Tab", "close-tab", sc["close-tab"]),
     { type: "separator" },
-    {
-      label: "Reopen Closed Tab",
-      accelerator: "CmdOrCtrl+Shift+T",
-      click: (_e, bw) => dispatchAction(bw, "reopen-tab"),
-    },
-    {
-      label: "Pin or unpin tab",
-      click: (_e, bw) => dispatchAction(bw, "toggle-pin-tab"),
-    },
+    menuActionItem("Reopen Closed Tab", "reopen-tab", sc["reopen-tab"]),
+    menuActionItem("Pin or unpin tab", "toggle-pin-tab", sc["toggle-pin-tab"]),
   ];
 
   const navigateItems = [
-    {
-      label: "Back",
-      accelerator: isMac ? "Cmd+[" : "Alt+Left",
-      click: (_e, bw) => dispatchAction(bw, "back"),
-    },
-    {
-      label: "Forward",
-      accelerator: isMac ? "Cmd+]" : "Alt+Right",
-      click: (_e, bw) => dispatchAction(bw, "forward"),
-    },
-    {
-      label: "Home",
-      accelerator: "Alt+Home",
-      click: (_e, bw) => dispatchAction(bw, "home"),
-    },
+    menuActionItem("Back", "back", sc.back),
+    menuActionItem("Forward", "forward", sc.forward),
+    menuActionItem("Home", "home", sc.home),
   ];
 
   const viewItems = [
-    {
-      label: "Reload Page",
-      accelerator: "CmdOrCtrl+R",
-      click: (_e, bw) => dispatchAction(bw, "reload"),
-    },
+    menuActionItem("Reload Page", "reload", sc.reload),
     { type: "separator" },
-    {
-      label: "Print…",
-      accelerator: "CmdOrCtrl+P",
-      click: (_e, bw) => dispatchAction(bw, "print-page"),
-    },
-    {
-      label: "Save Page as PDF…",
-      click: (_e, bw) => dispatchAction(bw, "save-page-pdf"),
-    },
+    menuActionItem("Print…", "print-page", sc["print-page"]),
+    menuActionItem("Save Page as PDF…", "save-page-pdf", sc["save-page-pdf"]),
     { type: "separator" },
-    {
-      label: "Picture in picture",
-      accelerator: "CmdOrCtrl+Shift+P",
-      click: (_e, bw) => dispatchAction(bw, "picture-in-picture"),
-    },
-    {
-      label: "Read selection aloud",
-      accelerator: "CmdOrCtrl+Shift+U",
-      click: (_e, bw) => dispatchAction(bw, "read-selection-aloud"),
-    },
-    {
-      label: "Check for updates…",
-      click: (_e, bw) => dispatchAction(bw, "check-for-updates"),
-    },
+    menuActionItem("Picture in picture", "picture-in-picture", sc["picture-in-picture"]),
+    menuActionItem("Read selection aloud", "read-selection-aloud", sc["read-selection-aloud"]),
+    menuActionItem("Check for updates…", "check-for-updates", ""),
     { type: "separator" },
-    {
-      label: "Find in Page…",
-      accelerator: "CmdOrCtrl+F",
-      click: (_e, bw) => dispatchAction(bw, "find-in-page"),
-    },
-    {
-      label: "History",
-      accelerator: isMac ? "Cmd+Shift+H" : "Ctrl+H",
-      click: (_e, bw) => dispatchAction(bw, "show-history"),
-    },
-    {
-      label: "Site permissions",
-      click: (_e, bw) => dispatchAction(bw, "show-site-permissions"),
-    },
-    {
-      label: "Saved passwords…",
-      accelerator: "CmdOrCtrl+Shift+L",
-      click: (_e, bw) => dispatchAction(bw, "show-password-manager"),
-    },
-    {
-      label: "Add this site to vault (session login)…",
-      click: (_e, bw) => dispatchAction(bw, "add-session-vault-placeholder"),
-    },
+    menuActionItem("Find in Page…", "find-in-page", sc["find-in-page"]),
+    menuActionItem("History", "show-history", sc["show-history"]),
+    menuActionItem("Site permissions", "show-site-permissions", ""),
+    menuActionItem("Saved passwords…", "show-password-manager", sc["show-password-manager"]),
+    menuActionItem("Add this site to vault (session login)…", "add-session-vault-placeholder", ""),
     { type: "separator" },
-    {
-      label: "Zoom In",
-      accelerator: "CmdOrCtrl+=",
-      click: (_e, bw) => dispatchAction(bw, "zoom-in"),
-    },
-    {
-      label: "Zoom Out",
-      accelerator: "CmdOrCtrl+-",
-      click: (_e, bw) => dispatchAction(bw, "zoom-out"),
-    },
-    {
-      label: "Actual Size",
-      accelerator: "CmdOrCtrl+0",
-      click: (_e, bw) => dispatchAction(bw, "zoom-reset"),
-    },
+    menuActionItem("Zoom In", "zoom-in", sc["zoom-in"]),
+    menuActionItem("Zoom Out", "zoom-out", sc["zoom-out"]),
+    menuActionItem("Actual Size", "zoom-reset", sc["zoom-reset"]),
     { type: "separator" },
-    {
-      label: "Settings…",
-      accelerator: "CmdOrCtrl+,",
-      click: (_e, bw) => dispatchAction(bw, "open-settings"),
-    },
+    menuActionItem("Settings…", "open-settings", sc["open-settings"]),
   ];
 
-  const bookmarkItems = [
-    {
-      label: "Bookmark This Page",
-      accelerator: "CmdOrCtrl+D",
-      click: (_e, bw) => dispatchAction(bw, "toggle-bookmark"),
-    },
-  ];
+  const bookmarkItems = [menuActionItem("Bookmark This Page", "toggle-bookmark", sc["toggle-bookmark"])];
 
   const editItems = [
-    {
-      label: "Focus Address Bar",
-      accelerator: "CmdOrCtrl+L",
-      click: (_e, bw) => dispatchAction(bw, "focus-omnibox"),
-    },
+    menuActionItem("Focus Address Bar", "focus-omnibox", sc["focus-omnibox"]),
     { type: "separator" },
     { role: "cut" },
     { role: "copy" },

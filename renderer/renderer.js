@@ -409,6 +409,9 @@
   const vaultPanel = document.getElementById("vault-panel");
   const vaultPanelBackdrop = document.getElementById("vault-panel-backdrop");
   const vaultPanelClose = document.getElementById("vault-panel-close");
+  const vaultPanelBack = document.getElementById("vault-panel-back");
+  const settingsSearchInput = document.getElementById("settings-search");
+  const settingsSearchEmpty = document.getElementById("settings-search-empty");
   const vaultListEl = document.getElementById("vault-list");
   const vaultSearchInput = document.getElementById("vault-search");
   const vaultAddToggle = document.getElementById("vault-add-toggle");
@@ -482,6 +485,11 @@
   const aiConvSaveBtn = document.getElementById("ai-conv-save");
   const aiConvDeleteBtn = document.getElementById("ai-conv-delete");
   const aiThinkingRow = document.getElementById("ai-thinking");
+  const aiDrawerTitle = document.getElementById("ai-drawer-title");
+  const aiDrawerSubtitle = document.getElementById("ai-drawer-subtitle");
+  const aiSearchStage = document.getElementById("ai-search-stage");
+  const aiSearchStageQuery = document.getElementById("ai-search-stage-query");
+  const aiSearchStageStatus = document.getElementById("ai-search-stage-status");
 
   const AI_TAB_AGENT_TEXT_MAX = 12000;
   const AI_TAB_AGENT_LOAD_TIMEOUT_MS = 42000;
@@ -492,6 +500,10 @@
   let aiSendBusy = false;
   /** @type {HTMLElement | null} */
   let aiStreamBubbleEl = null;
+  let aiDrawerSearchFullscreen = false;
+  /** @type {ReturnType<typeof setInterval> | null} */
+  let aiSearchStatusTimer = null;
+  const AI_SEARCH_STATUS_LINES = ["Searching the web", "Reading results", "Synthesizing answer"];
   /** @type {string} */
   let activeAiConversationId = "";
   const AI_CONVERSATIONS_STORE_VERSION = 1;
@@ -608,6 +620,9 @@
     },
     /** Omitted in saved files before 1.0; main defaults to `true` so upgrades skip onboarding. */
     firstRunOnboardingDone: true,
+    defaultSearchEngine: "duckduckgo",
+    keyboardShortcuts: {},
+    vaultKeepUnlockedUntilQuit: false,
   };
 
   /** Official download pages only; `fixedProxyRules` only if accurate (otherwise Nebula uses system proxy when routing is on). */
@@ -658,7 +673,17 @@
     aiAssistant: JSON.parse(JSON.stringify(DEFAULT_APP_SETTINGS.aiAssistant)),
     network: JSON.parse(JSON.stringify(DEFAULT_APP_SETTINGS.network)),
     vpnHelper: JSON.parse(JSON.stringify(DEFAULT_APP_SETTINGS.vpnHelper)),
+    keyboardShortcuts: {},
   };
+
+  /** @type {Record<string, string>} */
+  let effectiveShortcuts = {};
+
+  /** @type {string | null} */
+  let shortcutCaptureActionId = null;
+
+  /** @type {string} */
+  let shortcutCapturePending = "";
 
   function normalizeOpenAiBaseUrlApp(raw) {
     const fallback = DEFAULT_AI_ASSISTANT_APP.openaiBaseUrl;
@@ -757,6 +782,121 @@
     return appSettings.searchSuggestions;
   }
 
+  function getDefaultSearchEngine() {
+    const sp = window.NebulaSearchProviders;
+    if (!sp) return "duckduckgo";
+    return sp.normalizeEngineId(appSettings.defaultSearchEngine);
+  }
+
+  function getSearchProvider() {
+    return window.NebulaSearchProviders.getProvider(getDefaultSearchEngine());
+  }
+
+  function aiSearchHistoryStorageKey() {
+    return `nebula-ai-search-history-v1-${sanitizeProfileIdForSession(appSettings.activeProfileId || "default")}`;
+  }
+
+  function loadAiSearchHistory() {
+    try {
+      const raw = localStorage.getItem(aiSearchHistoryStorageKey());
+      const arr = raw ? JSON.parse(raw) : [];
+      return Array.isArray(arr) ? arr.filter((x) => typeof x === "string") : [];
+    } catch {
+      return [];
+    }
+  }
+
+  function recordAiSearchQuery(query) {
+    const q = String(query || "").trim();
+    if (!q) return;
+    const list = loadAiSearchHistory().filter((x) => x !== q);
+    list.unshift(q);
+    try {
+      localStorage.setItem(aiSearchHistoryStorageKey(), JSON.stringify(list.slice(0, 50)));
+    } catch {
+      /* */
+    }
+  }
+
+  function removeAiSearchQueryFromPast(query) {
+    const q = String(query || "").trim();
+    if (!q) return;
+    const list = loadAiSearchHistory().filter((x) => x !== q);
+    try {
+      localStorage.setItem(aiSearchHistoryStorageKey(), JSON.stringify(list.slice(0, 50)));
+    } catch {
+      /* */
+    }
+  }
+
+  /** @param {string} query @param {string} [conversationId] */
+  function buildAiSearchHistoryUrl(query, conversationId) {
+    const u = new URL("nebula://ai-search");
+    u.searchParams.set("q", String(query || "").trim());
+    if (conversationId) u.searchParams.set("cid", String(conversationId));
+    return u.href;
+  }
+
+  /** @param {string} url @returns {{ query: string, conversationId: string } | null} */
+  function parseAiSearchHistoryUrl(url) {
+    try {
+      const u = new URL(url);
+      if (u.protocol !== "nebula:" || u.hostname !== "ai-search") return null;
+      const query = u.searchParams.get("q");
+      const conversationId = u.searchParams.get("cid") || "";
+      return {
+        query: query != null ? String(query).trim() : "",
+        conversationId: String(conversationId).trim(),
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  function isAiSearchHistoryUrl(url) {
+    return !!parseAiSearchHistoryUrl(url);
+  }
+
+  function recordAiSearchHistoryVisit(query, conversationId) {
+    const q = String(query || "").trim();
+    const cid = String(conversationId || "").trim();
+    if (!q || !cid) return;
+    recordHistoryVisit(buildAiSearchHistoryUrl(q, cid), `AI search: ${q}`);
+    recordAiSearchQuery(q);
+  }
+
+  function purgeHistoryEntriesForAiConversation(conversationId) {
+    const cid = String(conversationId || "").trim();
+    if (!cid) return;
+    const arr = loadHistoryFromStorage();
+    const next = [];
+    for (const x of arr) {
+      const info = parseAiSearchHistoryUrl(x.url);
+      if (info && info.conversationId === cid) {
+        if (info.query) removeAiSearchQueryFromPast(info.query);
+        continue;
+      }
+      next.push(x);
+    }
+    saveHistoryToStorage(next);
+    if (historyPanel && !historyPanel.hidden) renderHistoryList();
+  }
+
+  function applyEffectiveShortcuts() {
+    if (window.NebulaKeyboardShortcuts) {
+      effectiveShortcuts = window.NebulaKeyboardShortcuts.mergeShortcuts(appSettings.keyboardShortcuts || {});
+    }
+  }
+
+  function isLikelyNavigationInput(raw) {
+    const t = String(raw || "").trim();
+    if (!t) return true;
+    if (/^https?:\/\//i.test(t)) return true;
+    if (/^file:\/\//i.test(t)) return true;
+    if (t.includes(".") && !t.includes(" ") && !t.startsWith("/")) return true;
+    return false;
+  }
+
   function normalizeAppSettings(raw) {
     const o = raw && typeof raw === "object" ? raw : {};
     const profIn = Array.isArray(o.profiles) ? o.profiles : DEFAULT_APP_SETTINGS.profiles;
@@ -820,6 +960,14 @@
       vpnHelper: normalizeAppVpnHelper(o.vpnHelper),
       firstRunOnboardingDone:
         typeof o.firstRunOnboardingDone === "boolean" ? o.firstRunOnboardingDone : DEFAULT_APP_SETTINGS.firstRunOnboardingDone,
+      defaultSearchEngine:
+        window.NebulaSearchProviders?.normalizeEngineId(o.defaultSearchEngine) ||
+        DEFAULT_APP_SETTINGS.defaultSearchEngine,
+      keyboardShortcuts:
+        o.keyboardShortcuts && typeof o.keyboardShortcuts === "object" && !Array.isArray(o.keyboardShortcuts)
+          ? { ...o.keyboardShortcuts }
+          : {},
+      vaultKeepUnlockedUntilQuit: o.vaultKeepUnlockedUntilQuit === true,
     };
     const ss = merged.searchSuggestions;
     const layers = ["past", "local", "remote"];
@@ -868,10 +1016,19 @@
   }
 
   async function loadAppSettings() {
+    if (window.nebula?.getShortcutManifest && window.NebulaKeyboardShortcuts) {
+      try {
+        const man = await window.nebula.getShortcutManifest();
+        window.NebulaKeyboardShortcuts.init(man);
+      } catch {
+        /* */
+      }
+    }
     if (window.nebula?.getSettings) {
       try {
         const s = await window.nebula.getSettings();
         appSettings = normalizeAppSettings(s);
+        applyEffectiveShortcuts();
         syncYoutubeAdSkipAdblockState();
         applyShellAppearance();
         syncChromeLayoutFromSettings();
@@ -886,6 +1043,7 @@
       }
     }
     appSettings = normalizeAppSettings(DEFAULT_APP_SETTINGS);
+    applyEffectiveShortcuts();
     syncYoutubeAdSkipAdblockState();
     applyShellAppearance();
     syncChromeLayoutFromSettings();
@@ -1078,19 +1236,41 @@
     populateAiConversationSelect();
   }
 
+  /**
+   * @param {string} id
+   * @param {{ silent?: boolean, skipHistoryPurge?: boolean }} [options]
+   * @returns {boolean}
+   */
+  function deleteAiConversationById(id, options) {
+    const cid = String(id || "").trim();
+    if (!cid) return false;
+    if (!options?.silent && !confirm("Delete this conversation from this profile?")) return false;
+    const store = loadAiConversationsStore();
+    if (!store.items.some((x) => x.id === cid)) return false;
+    store.items = store.items.filter((x) => x.id !== cid);
+    saveAiConversationsStore(store);
+    if (!options?.skipHistoryPurge) purgeHistoryEntriesForAiConversation(cid);
+    const wasActive = activeAiConversationId === cid;
+    if (wasActive) {
+      removeAiStreamBubble();
+      setAiThinkingVisible(false);
+      const sorted = [...store.items].sort((a, b) => b.updatedAt - a.updatedAt);
+      if (sorted.length) openAiConversationById(sorted[0].id);
+      else {
+        activeAiConversationId = "";
+        aiChatMessages = [];
+        renderAiMessageBubbles();
+        startNewAiConversation();
+      }
+    } else {
+      populateAiConversationSelect();
+    }
+    return true;
+  }
+
   function deleteActiveAiConversation() {
     if (!activeAiConversationId) return;
-    if (!confirm("Delete this conversation from this profile?")) return;
-    const store = loadAiConversationsStore();
-    store.items = store.items.filter((x) => x.id !== activeAiConversationId);
-    saveAiConversationsStore(store);
-    const sorted = [...store.items].sort((a, b) => b.updatedAt - a.updatedAt);
-    if (sorted.length) {
-      openAiConversationById(sorted[0].id);
-    } else {
-      activeAiConversationId = "";
-      startNewAiConversation();
-    }
+    deleteAiConversationById(activeAiConversationId);
   }
 
   function ensureAiConversationsOnDrawerOpen() {
@@ -1248,8 +1428,60 @@
 
   function setAiThinkingVisible(on) {
     if (!aiThinkingRow) return;
+    if (on && aiSearchStage && !aiSearchStage.hidden) return;
     aiThinkingRow.hidden = !on;
     aiThinkingRow.setAttribute("aria-hidden", on ? "false" : "true");
+  }
+
+  function stopAiSearchStatusCycle() {
+    if (aiSearchStatusTimer) {
+      clearInterval(aiSearchStatusTimer);
+      aiSearchStatusTimer = null;
+    }
+  }
+
+  function startAiSearchStatusCycle() {
+    stopAiSearchStatusCycle();
+    if (!aiSearchStageStatus) return;
+    let idx = 0;
+    aiSearchStageStatus.textContent = AI_SEARCH_STATUS_LINES[0];
+    aiSearchStatusTimer = setInterval(() => {
+      idx = (idx + 1) % AI_SEARCH_STATUS_LINES.length;
+      if (aiSearchStageStatus) aiSearchStageStatus.textContent = AI_SEARCH_STATUS_LINES[idx];
+    }, 2400);
+  }
+
+  function setAiDrawerSearchFullscreen(on, query) {
+    aiDrawerSearchFullscreen = !!on;
+    if (aiDrawer) aiDrawer.classList.toggle("ai-drawer--search-fullscreen", aiDrawerSearchFullscreen);
+    if (aiDrawerTitle) aiDrawerTitle.textContent = aiDrawerSearchFullscreen ? "AI Search" : "Assistant";
+    if (aiDrawerSubtitle) {
+      const q = String(query || "").trim();
+      if (aiDrawerSearchFullscreen && q) {
+        aiDrawerSubtitle.textContent = q;
+        aiDrawerSubtitle.hidden = false;
+      } else {
+        aiDrawerSubtitle.textContent = "";
+        aiDrawerSubtitle.hidden = true;
+      }
+    }
+    if (!aiDrawerSearchFullscreen) setAiSearchStageVisible(false);
+  }
+
+  function setAiSearchStageVisible(on, query) {
+    stopAiSearchStatusCycle();
+    if (aiSearchStage) {
+      aiSearchStage.hidden = !on;
+      aiSearchStage.setAttribute("aria-hidden", on ? "false" : "true");
+    }
+    if (aiSearchStageQuery) {
+      aiSearchStageQuery.textContent = on ? String(query || "").trim() : "";
+    }
+    if (aiMessagesEl) aiMessagesEl.classList.toggle("ai-messages--stage-hidden", !!on);
+    if (on) {
+      startAiSearchStatusCycle();
+      setAiThinkingVisible(false);
+    }
   }
 
   function removeAiStreamBubble() {
@@ -1279,18 +1511,28 @@
     });
   }
 
-  function setAiDrawerOpen(open) {
+  function setAiDrawerOpen(open, options) {
     if (!aiDrawer || !btnAi) return;
     const wasOpen = !aiDrawer.hidden;
     aiDrawer.hidden = !open;
     aiDrawer.setAttribute("aria-hidden", open ? "false" : "true");
     btnAi.setAttribute("aria-expanded", open ? "true" : "false");
+    if (!open) {
+      setAiDrawerSearchFullscreen(false);
+      setAiSearchStageVisible(false);
+      if (aiInput) aiInput.placeholder = "Ask something… (Enter to send, Shift+Enter for new line)";
+    } else if (options && options.searchFullscreen) {
+      setAiDrawerSearchFullscreen(true, options.searchQuery);
+    } else {
+      setAiDrawerSearchFullscreen(false);
+      if (aiInput) aiInput.placeholder = "Ask something… (Enter to send, Shift+Enter for new line)";
+    }
     if (open) {
       closeTranslatePanel();
       closeVpnPanel();
       syncAiProviderAndModelFromSettings();
       void refreshAiDrawerHint();
-      ensureAiConversationsOnDrawerOpen();
+      if (!options || !options.searchFullscreen) ensureAiConversationsOnDrawerOpen();
     }
     if (!open && wasOpen) scheduleRestoreGuestFocus();
   }
@@ -1308,15 +1550,18 @@
    * @param {string} model
    * @param {{ role: string, content: string }[]} messages
    */
-  async function streamAiAssistantFromMessages(provider, model, messages) {
+  async function streamAiAssistantFromMessages(provider, model, messages, options) {
     let full = "";
     if (typeof window.nebula?.aiChatStream !== "function") {
       throw new Error("Streaming is not available.");
     }
+    const streamPayload = { provider, model, messages };
+    if (options && options.forceWebSearch) streamPayload.forceWebSearch = true;
     await new Promise((resolve, reject) => {
       window.nebula.aiChatStream(
-        { provider, model, messages },
+        streamPayload,
         (chunk) => {
+          setAiSearchStageVisible(false);
           setAiThinkingVisible(false);
           full += chunk;
           if (!aiMessagesEl) return;
@@ -1452,6 +1697,131 @@
     aiSendBusy = false;
     renderAiMessageBubbles();
     persistCurrentAiConversation();
+  }
+
+  async function runAiSearchFromOmnibox(query) {
+    const q = String(query || "").trim();
+    if (!q) return;
+    hideOmniboxSuggestions();
+    const ai = normalizeAppAiAssistant(appSettings.aiAssistant || {});
+    const provider =
+      ai.activeProvider === "anthropic" ? "anthropic" : ai.activeProvider === "google" ? "google" : "openai";
+    const model = String(ai.modelByProvider?.[provider] || "").trim();
+    if (!model) {
+      alert("Choose an AI model in Settings → AI assistant, then try again.");
+      openSettingsPanel();
+      return;
+    }
+    let status = null;
+    try {
+      status = await window.nebula?.aiStatus?.();
+    } catch {
+      status = null;
+    }
+    if (!status) {
+      alert("AI search is not available.");
+      return;
+    }
+    if (status.locked) {
+      alert("Unlock the saved passwords vault to use AI search API keys.");
+      openSettingsPanel();
+      return;
+    }
+    const hasProviderKey =
+      provider === "openai"
+        ? !!status.providers?.openai?.hasKey
+        : provider === "anthropic"
+          ? !!status.providers?.anthropic?.hasKey
+          : !!status.providers?.google?.hasKey;
+    if (!hasProviderKey) {
+      alert(`Add a ${provider === "openai" ? "OpenAI" : provider === "anthropic" ? "Anthropic" : "Gemini"} API key in Settings → AI assistant.`);
+      openSettingsPanel();
+      return;
+    }
+    if (!status.braveSearch?.hasKey) {
+      alert("AI search needs a Brave Search API key in Settings → AI assistant (used for web results).");
+      openSettingsPanel();
+      return;
+    }
+    setAiDrawerOpen(true, { searchFullscreen: true, searchQuery: q });
+    syncAiProviderAndModelFromSettings();
+    startNewAiConversation();
+    const systemLine =
+      "You are a web search assistant. Use the web_search tool to find current information. Answer concisely and cite sources with markdown links. If results are thin, say so.";
+    aiChatMessages.push({ role: "user", content: q });
+    renderAiMessageBubbles();
+    aiSendBusy = true;
+    removeAiStreamBubble();
+    setAiSearchStageVisible(true, q);
+    if (aiSendBtn) aiSendBtn.disabled = true;
+    if (aiSummarizeTabBtn) aiSummarizeTabBtn.disabled = true;
+    if (aiInput) aiInput.disabled = true;
+    let full = "";
+    try {
+      full = await streamAiAssistantFromMessages(
+        provider,
+        model,
+        [
+          { role: "system", content: systemLine },
+          { role: "user", content: q },
+        ],
+        { forceWebSearch: true }
+      );
+      removeAiStreamBubble();
+      if (full.trim()) {
+        aiChatMessages.push({ role: "assistant", content: full.trim() });
+      } else {
+        aiChatMessages.push({ role: "error", content: "Empty response." });
+      }
+    } catch (e) {
+      removeAiStreamBubble();
+      aiChatMessages.push({ role: "error", content: String(e && e.message ? e.message : e) });
+    }
+    setAiSearchStageVisible(false);
+    setAiThinkingVisible(false);
+    if (aiSendBtn) aiSendBtn.disabled = false;
+    if (aiSummarizeTabBtn) aiSummarizeTabBtn.disabled = false;
+    if (aiInput) aiInput.disabled = false;
+    aiSendBusy = false;
+    renderAiMessageBubbles();
+    persistCurrentAiConversation();
+    if (activeAiConversationId) recordAiSearchHistoryVisit(q, activeAiConversationId);
+    if (aiInput) {
+      aiInput.placeholder = "Ask a follow-up… (Enter to send, Shift+Enter for new line)";
+      queueMicrotask(() => {
+        try {
+          aiInput.focus();
+        } catch {
+          /* */
+        }
+      });
+    }
+  }
+
+  function openAiSearchFromHistory(url, fallbackTitle) {
+    const info = parseAiSearchHistoryUrl(url);
+    if (!info) return false;
+    closeHistoryPanel();
+    if (info.conversationId) {
+      const store = loadAiConversationsStore();
+      if (!store.items.some((x) => x.id === info.conversationId)) {
+        alert("This AI search chat was deleted.");
+        removeHistoryEntry(url);
+        return true;
+      }
+      setAiDrawerOpen(true, {
+        searchFullscreen: true,
+        searchQuery: info.query || fallbackTitle || "",
+      });
+      syncAiProviderAndModelFromSettings();
+      openAiConversationById(info.conversationId);
+      return true;
+    }
+    if (info.query) {
+      void runAiSearchFromOmnibox(info.query);
+      return true;
+    }
+    return false;
   }
 
   function syncChromeLayoutFromSettings() {
@@ -2847,6 +3217,7 @@
   let vaultHasLocalAccount = false;
   /** @type {ReturnType<typeof setInterval> | null} */
   let vaultUnlockPollId = null;
+  let vaultOpenedFromSettings = false;
 
   function closeVaultPanel() {
     closePasswordSaveOfferPanel();
@@ -2860,7 +3231,14 @@
       vaultUnlockError.hidden = true;
       vaultUnlockError.textContent = "";
     }
+    vaultOpenedFromSettings = false;
+    if (vaultPanelBack) vaultPanelBack.hidden = true;
     scheduleRestoreGuestFocus();
+  }
+
+  function vaultBackToSettings() {
+    closeVaultPanel();
+    if (settingsPanel && settingsPanel.hidden) openSettingsPanel();
   }
 
   function vaultOriginLabel(entry) {
@@ -3171,13 +3549,15 @@
     queueMicrotask(() => vaultFieldUrl?.focus());
   }
 
-  async function openVaultPanel() {
+  async function openVaultPanel(options) {
     if (!vaultPanel) return;
+    vaultOpenedFromSettings = !!(options && options.fromSettings);
+    if (vaultPanelBack) vaultPanelBack.hidden = !vaultOpenedFromSettings;
     rejectActivePermissionIfAny();
     closePasswordSaveOfferPanel();
     closeChangelogPanel();
     if (!findBar.hidden) closeFindBar();
-    if (settingsPanel && !settingsPanel.hidden) closeSettingsPanel();
+    if (!vaultOpenedFromSettings && settingsPanel && !settingsPanel.hidden) closeSettingsPanel();
     if (historyPanel && !historyPanel.hidden) closeHistoryPanel();
     if (sitePermPanel && !sitePermPanel.hidden) closeSitePermissionsPanel();
     hideOmniboxSuggestions();
@@ -3253,9 +3633,21 @@
   }
 
   function removeHistoryEntry(url, visitedAt) {
+    const info = parseAiSearchHistoryUrl(url);
+    if (info) {
+      if (info.conversationId) {
+        deleteAiConversationById(info.conversationId, { silent: true, skipHistoryPurge: true });
+      }
+      if (info.query) removeAiSearchQueryFromPast(info.query);
+    }
     const arr = loadHistoryFromStorage();
-    const next = arr.filter((x) => !(x.url === url && x.visitedAt === visitedAt));
+    const next = arr.filter((x) => {
+      if (x.url !== url) return true;
+      if (Number.isFinite(visitedAt)) return x.visitedAt !== visitedAt;
+      return false;
+    });
     saveHistoryToStorage(next);
+    refreshOmniboxSuggestions();
     if (historyPanel && !historyPanel.hidden) renderHistoryList();
   }
 
@@ -3348,12 +3740,21 @@
       btn.className = "history-item";
       btn.dataset.historyUrl = item.url;
       btn.dataset.historyVisitedAt = String(item.visitedAt);
+      const aiHist = parseAiSearchHistoryUrl(item.url);
       const titleSpan = document.createElement("span");
       titleSpan.className = "history-item-title";
-      titleSpan.textContent = item.title || item.url;
+      titleSpan.textContent =
+        aiHist && (item.title || aiHist.query)
+          ? item.title || `AI search: ${aiHist.query}`
+          : item.title || item.url;
       const urlSpan = document.createElement("span");
       urlSpan.className = "history-item-url";
-      urlSpan.textContent = item.url;
+      if (aiHist && aiHist.query) {
+        urlSpan.textContent = `AI search · ${aiHist.query}`;
+        btn.classList.add("history-item--ai-search");
+      } else {
+        urlSpan.textContent = item.url;
+      }
       const meta = document.createElement("span");
       meta.className = "history-item-meta";
       meta.textContent = formatHistoryTime(item.visitedAt);
@@ -3383,6 +3784,7 @@
   }
 
   function openHistoryUrl(url) {
+    if (openAiSearchFromHistory(url)) return;
     closeHistoryPanel();
     const w = getActiveWebview();
     if (w) w.loadURL(url);
@@ -3576,10 +3978,194 @@
     }
   }
 
-  function settingsShortcutMatch(e) {
-    if (e.repeat) return false;
-    if (e.key !== ",") return false;
-    return e.ctrlKey || e.metaKey;
+  function shouldDeferGlobalShortcut(e) {
+    if (shortcutCaptureActionId) return true;
+    if (sessionRestorePanel && !sessionRestorePanel.hidden) return true;
+    if (passwordSaveOfferPanel && !passwordSaveOfferPanel.hidden) return true;
+    if (permissionPromptPanel && !permissionPromptPanel.hidden) return true;
+    if (tabGroupRenamePanel && !tabGroupRenamePanel.hidden) return true;
+    return false;
+  }
+
+  function handleGlobalShortcut(e) {
+    if (shouldDeferGlobalShortcut(e)) return false;
+    const NK = window.NebulaKeyboardShortcuts;
+    if (!NK) return false;
+    const isMac = !!window.nebula?.isMac;
+    for (const [actionId, accel] of Object.entries(effectiveShortcuts)) {
+      if (!accel) continue;
+      if (!NK.eventMatchesAccelerator(e, accel, isMac)) continue;
+      if (actionId === "print-page" && shouldSuppressShellPrintShortcut()) return false;
+      const def = NK.actionForId(actionId);
+      const action = def && def.action ? def.action : actionId;
+      e.preventDefault();
+      handleAction(action);
+      return true;
+    }
+    return false;
+  }
+
+  function formatShortcutKbdHtml(accel) {
+    const NK = window.NebulaKeyboardShortcuts;
+    const isMac = !!window.nebula?.isMac;
+    const text = NK ? NK.formatAcceleratorForDisplay(accel, isMac) : accel || "—";
+    if (!text || text === "—") return '<span class="settings-shortcut-empty">—</span>';
+    return text
+      .split("+")
+      .map((part) => `<kbd class="settings-kbd">${part}</kbd>`)
+      .join("+");
+  }
+
+  function renderSettingsShortcutsTable() {
+    const tbody = document.getElementById("settings-shortcuts-tbody");
+    if (!tbody || !window.NebulaKeyboardShortcuts) return;
+    tbody.replaceChildren();
+    const NK = window.NebulaKeyboardShortcuts;
+    const actions = NK.getActions();
+    const overrides = appSettings.keyboardShortcuts || {};
+    const effective = NK.mergeShortcuts(overrides);
+    const conflicts = new Set(
+      NK.findConflicts(effective).map((c) => {
+        const m = /^(\S+) and (\S+) both use/.exec(c);
+        return m ? [m[1], m[2]] : [];
+      }).flat()
+    );
+    let lastCategory = "";
+    for (const def of actions) {
+      if (def.category && def.category !== lastCategory) {
+        lastCategory = def.category;
+        const trCat = document.createElement("tr");
+        trCat.className = "settings-shortcuts-category";
+        const td = document.createElement("td");
+        td.colSpan = 3;
+        td.textContent = def.category;
+        trCat.appendChild(td);
+        tbody.appendChild(trCat);
+      }
+      const tr = document.createElement("tr");
+      tr.dataset.shortcutActionId = def.id;
+      if (conflicts.has(def.id)) tr.classList.add("settings-shortcut-conflict");
+      const tdLabel = document.createElement("td");
+      tdLabel.textContent = def.label;
+      const tdAccel = document.createElement("td");
+      tdAccel.className = "settings-shortcut-accel-cell";
+      const capturing = shortcutCaptureActionId === def.id;
+      if (capturing) {
+        const preview = shortcutCapturePending
+          ? formatShortcutKbdHtml(shortcutCapturePending)
+          : '<span class="settings-shortcut-capture-hint">Press shortcut…</span>';
+        tdAccel.innerHTML = `${preview}<span class="settings-shortcut-capture-hint"> Enter to save · Esc to cancel</span>`;
+        tr.classList.add("settings-shortcut-capturing");
+      } else {
+        tdAccel.innerHTML = formatShortcutKbdHtml(effective[def.id]);
+      }
+      const tdBtns = document.createElement("td");
+      tdBtns.className = "settings-shortcut-actions";
+      const btnChange = document.createElement("button");
+      btnChange.type = "button";
+      btnChange.className = "settings-action-btn";
+      btnChange.textContent = capturing ? "Cancel" : "Change";
+      btnChange.dataset.shortcutChange = def.id;
+      const btnReset = document.createElement("button");
+      btnReset.type = "button";
+      btnReset.className = "settings-action-btn";
+      btnReset.textContent = "Reset";
+      btnReset.dataset.shortcutReset = def.id;
+      tdBtns.append(btnChange, btnReset);
+      tr.append(tdLabel, tdAccel, tdBtns);
+      tbody.appendChild(tr);
+    }
+    const warn = document.getElementById("settings-shortcuts-conflicts");
+    if (warn) {
+      const list = NK.findConflicts(effective);
+      if (list.length) {
+        warn.hidden = false;
+        warn.textContent = "Conflicting shortcuts: " + list.join("; ");
+      } else {
+        warn.hidden = true;
+        warn.textContent = "";
+      }
+    }
+  }
+
+  async function persistKeyboardShortcutsPatch(patchOverrides, replaceAll) {
+    const nextOverrides = replaceAll
+      ? patchOverrides && typeof patchOverrides === "object" && !Array.isArray(patchOverrides)
+        ? { ...patchOverrides }
+        : {}
+      : { ...(appSettings.keyboardShortcuts || {}), ...patchOverrides };
+    for (const k of Object.keys(nextOverrides)) {
+      if (nextOverrides[k] === undefined) delete nextOverrides[k];
+    }
+    if (window.nebula?.setSettings) {
+      try {
+        const next = await window.nebula.setSettings({ keyboardShortcuts: nextOverrides });
+        appSettings = normalizeAppSettings(next);
+      } catch {
+        appSettings = normalizeAppSettings({ ...appSettings, keyboardShortcuts: nextOverrides });
+      }
+    } else {
+      appSettings = normalizeAppSettings({ ...appSettings, keyboardShortcuts: nextOverrides });
+    }
+    applyEffectiveShortcuts();
+    renderSettingsShortcutsTable();
+  }
+
+  function cancelShortcutCapture() {
+    shortcutCaptureActionId = null;
+    shortcutCapturePending = "";
+    renderSettingsShortcutsTable();
+  }
+
+  function startShortcutCapture(actionId) {
+    if (!actionId) return;
+    if (shortcutCaptureActionId === actionId) {
+      cancelShortcutCapture();
+      return;
+    }
+    shortcutCaptureActionId = actionId;
+    shortcutCapturePending = "";
+    renderSettingsShortcutsTable();
+  }
+
+  async function handleShortcutCaptureKeydown(e) {
+    if (!shortcutCaptureActionId || !window.NebulaKeyboardShortcuts) return;
+    const NK = window.NebulaKeyboardShortcuts;
+    if (e.key === "Escape") {
+      e.preventDefault();
+      e.stopPropagation();
+      cancelShortcutCapture();
+      return;
+    }
+    if (e.key === "Enter") {
+      if (!shortcutCapturePending || !NK.parseAcceleratorString(shortcutCapturePending)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const id = shortcutCaptureActionId;
+      const accel = shortcutCapturePending;
+      shortcutCaptureActionId = null;
+      shortcutCapturePending = "";
+      await persistKeyboardShortcutsPatch({ [id]: accel });
+      return;
+    }
+    if (e.key === "Backspace" || e.key === "Delete") {
+      const def = NK.actionForId(shortcutCaptureActionId);
+      if (def && def.allowEmpty) {
+        e.preventDefault();
+        e.stopPropagation();
+        const id = shortcutCaptureActionId;
+        shortcutCaptureActionId = null;
+        shortcutCapturePending = "";
+        await persistKeyboardShortcutsPatch({ [id]: "" });
+      }
+      return;
+    }
+    const accel = NK.eventToAcceleratorString(e, !!window.nebula?.isMac);
+    if (!accel || !NK.parseAcceleratorString(accel)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    shortcutCapturePending = accel;
+    renderSettingsShortcutsTable();
   }
 
   async function refreshTranslationKeyStatus() {
@@ -3738,6 +4324,44 @@
     chk("settings-tb-vpn", tbb.vpn !== false);
     chk("settings-tb-ai", tbb.ai !== false);
     chk("settings-tb-zoom-reset", tbb.zoomReset !== false);
+    chk("settings-vault-keep-unlocked", s.vaultKeepUnlockedUntilQuit === true);
+    const dse = document.getElementById("settings-default-search-engine");
+    if (dse) dse.value = getDefaultSearchEngine();
+    renderSettingsShortcutsTable();
+    applySettingsSectionSearch(settingsSearchInput?.value || "");
+  }
+
+  function applySettingsSectionSearch(rawQuery) {
+    const q = String(rawQuery || "").trim();
+    const body = document.querySelector(".settings-panel-body");
+    const sections = body ? [...body.querySelectorAll(":scope > .settings-section")] : [];
+    let visible = 0;
+    if (window.NebulaSettingsSearch) {
+      const r = window.NebulaSettingsSearch.filterSettingsSections(q, sections);
+      visible = r.visible;
+    } else {
+      const low = q.toLowerCase();
+      for (const sec of sections) {
+        if (!low) {
+          sec.hidden = false;
+          visible++;
+          continue;
+        }
+        const cat =
+          sec.dataset.settingsCategory ||
+          sec.querySelector(".settings-section-title")?.textContent?.trim() ||
+          "";
+        const match = cat.toLowerCase().includes(low);
+        sec.hidden = !match;
+        if (match) visible++;
+      }
+    }
+    if (settingsSearchEmpty) settingsSearchEmpty.hidden = !q || visible > 0;
+  }
+
+  function clearSettingsSectionSearch() {
+    if (settingsSearchInput) settingsSearchInput.value = "";
+    applySettingsSectionSearch("");
   }
 
   function parseAiModelLines(text) {
@@ -3851,6 +4475,11 @@
         },
       }),
       vpnHelper: normalizeAppVpnHelper(appSettings.vpnHelper || {}),
+      defaultSearchEngine: (() => {
+        const raw = String(document.getElementById("settings-default-search-engine")?.value || "duckduckgo");
+        return window.NebulaSearchProviders?.normalizeEngineId(raw) || "duckduckgo";
+      })(),
+      vaultKeepUnlockedUntilQuit: chk("settings-vault-keep-unlocked"),
     };
   }
 
@@ -3906,6 +4535,8 @@
 
   function closeSettingsPanel() {
     if (!settingsPanel || settingsPanel.hidden) return;
+    cancelShortcutCapture();
+    clearSettingsSectionSearch();
     hideProfileAddPanel();
     closeChangelogPanel();
     closePasswordSaveOfferPanel();
@@ -3963,6 +4594,7 @@
       resetAiConversationsForProfileChange();
       if (aiDrawerIsOpen()) ensureAiConversationsOnDrawerOpen();
     }
+    applyEffectiveShortcuts();
     syncYoutubeAdSkipAdblockState();
     applyShellAppearance();
     syncChromeLayoutFromSettings();
@@ -3990,26 +4622,6 @@
         void window.nebula.relaunchApp();
       }
     }
-  }
-
-  function historyShortcutMatch(e) {
-    if (e.repeat) return false;
-    if (e.key !== "h" && e.key !== "H") return false;
-    if (e.altKey) return false;
-    if (window.nebula?.isMac) {
-      if (e.metaKey && e.shiftKey && !e.ctrlKey) return true;
-      if (e.ctrlKey && !e.metaKey) return true;
-      return false;
-    }
-    return e.ctrlKey && !e.shiftKey;
-  }
-
-  function printShortcutMatch(e) {
-    if (e.repeat) return false;
-    if (e.key !== "p" && e.key !== "P") return false;
-    if (!e.ctrlKey && !e.metaKey) return false;
-    if (e.altKey || e.shiftKey) return false;
-    return true;
   }
 
   function shouldSuppressShellPrintShortcut() {
@@ -4478,7 +5090,12 @@
     if (t.includes(".") && !t.includes(" ") && !t.startsWith("/")) {
       return "https://" + t;
     }
-    return "https://duckduckgo.com/?q=" + encodeURIComponent(t);
+    const engine = getDefaultSearchEngine();
+    if (engine === "ai") {
+      return "nebula://ai-search?q=" + encodeURIComponent(t);
+    }
+    const provider = getSearchProvider();
+    return provider.buildSearchUrl(t);
   }
 
   function hideOmniboxSuggestions() {
@@ -4551,7 +5168,7 @@
     for (const h of hist) {
       if (!ss.enableHistory) break;
       if (nHist >= ss.maxHistory) break;
-      const dq = extractDuckDuckGoQueryFromUrl(h.url);
+      const dq = extractSearchQueryFromUrl(h.url);
       if (dq && skipQ && skipQ.has(dq.toLowerCase())) continue;
       if (navSkipped(h.url)) continue;
       const hay = `${h.title || ""} ${h.url}`.toLowerCase();
@@ -4575,30 +5192,32 @@
     return out;
   }
 
-  /** @returns {string | null} decoded search query for DuckDuckGo search URLs */
-  function extractDuckDuckGoQueryFromUrl(url) {
-    try {
-      const u = new URL(url);
-      if (!u.hostname.endsWith("duckduckgo.com")) return null;
-      const qq = u.searchParams.get("q");
-      if (qq == null || !String(qq).trim()) return null;
-      return String(qq).trim();
-    } catch {
-      return null;
+  /** @returns {string | null} decoded search query for the active default engine */
+  function extractSearchQueryFromUrl(url) {
+    const provider = getSearchProvider();
+    let q = provider.extractQueryFromUrl(url);
+    if (!q && getDefaultSearchEngine() === "ai" && window.NebulaSearchProviders?.extractQueryFromAnyWebSearchUrl) {
+      q = window.NebulaSearchProviders.extractQueryFromAnyWebSearchUrl(url);
     }
+    return q;
   }
 
-  /** Prior searches (DuckDuckGo) from history that match the current omnibox text */
+  /** Prior searches from history (and AI history) for the active engine */
   function collectPastSearchSuggestions(rawQuery) {
     const ss = getSearchSettings();
     if (!ss.enablePastSearch) return [];
     const needle = rawQuery.trim().toLowerCase();
     if (needle.length === 0) return [];
+    const provider = getSearchProvider();
     const hist = loadHistoryFromStorage();
+    const sp = window.NebulaSearchProviders;
     /** @type {Map<string, { query: string, visitedAt: number }>} */
     const best = new Map();
     for (const h of hist) {
-      const queryText = extractDuckDuckGoQueryFromUrl(h.url);
+      let queryText = provider.extractQueryFromUrl(h.url);
+      if (!queryText && getDefaultSearchEngine() === "ai" && sp?.extractQueryFromAnyWebSearchUrl) {
+        queryText = sp.extractQueryFromAnyWebSearchUrl(h.url);
+      }
       if (!queryText) continue;
       const low = queryText.toLowerCase();
       if (!low.includes(needle)) continue;
@@ -4607,11 +5226,27 @@
         best.set(low, { query: queryText, visitedAt: h.visitedAt });
       }
     }
+    if (getDefaultSearchEngine() === "ai") {
+      let i = 0;
+      for (const q of loadAiSearchHistory()) {
+        const low = q.toLowerCase();
+        if (!low.includes(needle)) continue;
+        if (best.has(low)) continue;
+        best.set(low, { query: q, visitedAt: Date.now() + 1e12 - i });
+        i++;
+      }
+    }
+
     const sorted = [...best.values()].sort((a, b) => b.visitedAt - a.visitedAt);
     const out = [];
     for (const { query } of sorted.slice(0, ss.maxPastSearch)) {
+      const engine = getDefaultSearchEngine();
+      const nav =
+        engine === "ai"
+          ? `nebula://ai-search?q=${encodeURIComponent(query)}`
+          : getSearchProvider().buildSearchUrl(query);
       out.push({
-        navigateUrl: normalizeInput(query),
+        navigateUrl: nav,
         label: query,
         sub: "Past search",
         badge: "Past search",
@@ -4654,12 +5289,25 @@
 
     function addRemote(phrases) {
       if (!phrases || !Array.isArray(phrases) || !ss.enableDuckDuckGo) return;
+      const engine = getDefaultSearchEngine();
+      const provider = getSearchProvider();
       const slice = phrases.slice(0, ss.maxDuckDuckGo);
       for (const phrase of slice) {
         if (rows.length >= maxTotal) break;
         const pl = phrase.toLowerCase();
         if (seenPhrase.has(pl)) continue;
-        const nav = normalizeInput(phrase);
+        let nav;
+        let label = phrase;
+        let kind;
+        let aiQuery;
+        if (engine === "ai") {
+          aiQuery = phrase.replace(/^ask ai:\s*/i, "").trim() || phrase;
+          label = aiQuery;
+          nav = `nebula://ai-search?q=${encodeURIComponent(aiQuery)}`;
+          kind = "ai-search";
+        } else {
+          nav = provider.buildSearchUrl(phrase);
+        }
         if (seenNav.has(nav)) continue;
         try {
           if (seenNav.has(normalizeBookmarkUrl(nav))) continue;
@@ -4670,9 +5318,11 @@
         markUrls(nav);
         rows.push({
           navigateUrl: nav,
-          label: phrase,
-          sub: "DuckDuckGo search",
-          badge: "Search",
+          label,
+          sub: engine === "ai" ? "AI search" : `${provider.label} search`,
+          badge: engine === "ai" ? "AI search" : "Search",
+          kind,
+          aiQuery,
         });
       }
     }
@@ -4704,16 +5354,14 @@
     return rows;
   }
 
-  async function fetchDuckDuckGoSuggestions(query) {
+  async function fetchRemoteSearchSuggestions(query) {
     const ss = getSearchSettings();
-    const url = `https://duckduckgo.com/ac/?q=${encodeURIComponent(query)}&type=list`;
-    const res = await fetch(url);
-    if (!res.ok) return [];
-    const data = await res.json();
-    if (Array.isArray(data) && Array.isArray(data[1])) {
-      return data[1].filter((x) => typeof x === "string").slice(0, ss.maxDuckDuckGo);
+    const provider = getSearchProvider();
+    try {
+      return await provider.fetchRemoteSuggestions(query, ss.maxDuckDuckGo);
+    } catch {
+      return [];
     }
-    return [];
   }
 
   function renderOmniboxSuggestionsList() {
@@ -4775,6 +5423,21 @@
     const row = omniboxSuggestionRows[index];
     if (!row) return;
     hideOmniboxSuggestions();
+    if (row.kind === "ai-search") {
+      const q = row.aiQuery || row.label || "";
+      void runAiSearchFromOmnibox(q);
+      return;
+    }
+    if (row.navigateUrl && row.navigateUrl.startsWith("nebula://ai-search")) {
+      try {
+        const u = new URL(row.navigateUrl);
+        const q = u.searchParams.get("q") || "";
+        void runAiSearchFromOmnibox(q);
+      } catch {
+        /* */
+      }
+      return;
+    }
     const w = getActiveWebview();
     if (w) w.loadURL(row.navigateUrl);
     else createTab(row.navigateUrl);
@@ -4824,7 +5487,7 @@
       const still = urlInput.value.trim();
       if (still !== debouncedQuery || still.length < getSearchSettings().remoteMinChars) return;
       try {
-        const remote = await fetchDuckDuckGoSuggestions(still);
+        const remote = await fetchRemoteSearchSuggestions(still);
         if (!isFocusInsideOmniboxWrap()) return;
         if (urlInput.value.trim() !== still) return;
         const pastFresh = collectPastSearchSuggestions(urlInput.value);
@@ -4851,7 +5514,7 @@
     let rows = mergeOmniboxLayers(past, local, null);
     if (!ss.enableDuckDuckGo || q.length < ss.remoteMinChars) return rows;
     try {
-      const remote = await fetchDuckDuckGoSuggestions(q);
+      const remote = await fetchRemoteSearchSuggestions(q);
       const pastFresh = collectPastSearchSuggestions(q);
       const skipNavF = new Set(pastFresh.map((p) => p.navigateUrl));
       const skipQF = new Set(pastFresh.map((p) => p.label.toLowerCase()));
@@ -6970,8 +7633,22 @@
       applyOmniboxSuggestion(omniboxSelectedIndex);
       return;
     }
+    const raw = urlInput.value.trim();
+    if (getDefaultSearchEngine() === "ai" && raw && !isLikelyNavigationInput(raw)) {
+      void runAiSearchFromOmnibox(raw);
+      return;
+    }
     const w = getActiveWebview();
     const target = normalizeInput(urlInput.value);
+    if (target.startsWith("nebula://ai-search")) {
+      try {
+        const u = new URL(target);
+        void runAiSearchFromOmnibox(u.searchParams.get("q") || raw);
+      } catch {
+        void runAiSearchFromOmnibox(raw);
+      }
+      return;
+    }
     if (w) w.loadURL(target);
     else createTab(target);
   });
@@ -6992,6 +7669,29 @@
   settingsPanelClose?.addEventListener("click", () => closeSettingsPanel());
   settingsPanelBackdrop?.addEventListener("click", () => closeSettingsPanel());
   settingsSaveBtn?.addEventListener("click", () => void saveSettingsFromForm());
+  document.getElementById("settings-shortcuts-reset-all")?.addEventListener("click", () => {
+    if (!confirm("Reset all keyboard shortcuts to defaults?")) return;
+    void persistKeyboardShortcutsPatch({}, true);
+  });
+  document.getElementById("settings-shortcuts-tbody")?.addEventListener("click", (e) => {
+    const t = e.target instanceof Element ? e.target : null;
+    const changeBtn = t?.closest("[data-shortcut-change]");
+    const resetBtn = t?.closest("[data-shortcut-reset]");
+    if (changeBtn) {
+      e.preventDefault();
+      startShortcutCapture(String(changeBtn.getAttribute("data-shortcut-change") || ""));
+      return;
+    }
+    if (resetBtn) {
+      e.preventDefault();
+      e.stopPropagation();
+      const id = String(resetBtn.getAttribute("data-shortcut-reset") || "");
+      if (!id) return;
+      const next = { ...(appSettings.keyboardShortcuts || {}) };
+      delete next[id];
+      void persistKeyboardShortcutsPatch(next, true);
+    }
+  });
   settingsProfileAdd?.addEventListener("click", () => showProfileAddPanel());
   settingsProfileAddCancel?.addEventListener("click", () => hideProfileAddPanel());
   settingsProfileAddConfirm?.addEventListener("click", () => void commitNewProfileFromInput());
@@ -7271,7 +7971,15 @@
       /* ignore */
     }
   });
-  settingsOpenVault?.addEventListener("click", () => void openVaultPanel());
+  settingsOpenVault?.addEventListener("click", () => void openVaultPanel({ fromSettings: true }));
+  vaultPanelBack?.addEventListener("click", () => vaultBackToSettings());
+  settingsSearchInput?.addEventListener("input", () => applySettingsSectionSearch(settingsSearchInput.value));
+  settingsSearchInput?.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      clearSettingsSectionSearch();
+    }
+  });
 
   vaultUnlockSubmit?.addEventListener("click", () => void submitVaultUnlock());
   vaultUnlockPass?.addEventListener("keydown", (e) => {
@@ -7454,23 +8162,11 @@
           return;
         }
       }
-      if (!e.repeat && (e.key === "n" || e.key === "N") && e.shiftKey && (e.ctrlKey || e.metaKey) && !e.altKey) {
-        e.preventDefault();
-        createTab(homeUrl(), { private: true });
+      if (shortcutCaptureActionId) {
+        void handleShortcutCaptureKeydown(e);
         return;
       }
-      if (!e.repeat && printShortcutMatch(e)) {
-        if (!shouldSuppressShellPrintShortcut()) {
-          e.preventDefault();
-          void printActivePage();
-        }
-        return;
-      }
-      if (settingsShortcutMatch(e)) {
-        e.preventDefault();
-        toggleSettingsPanel();
-        return;
-      }
+      if (handleGlobalShortcut(e)) return;
       if (e.key === "Escape" && tabGroupRenamePanel && !tabGroupRenamePanel.hidden) {
         e.preventDefault();
         closeTabGroupRenameDialog();
@@ -7525,11 +8221,6 @@
       if (e.key === "Escape" && omniboxSuggestions && !omniboxSuggestions.hidden) {
         e.preventDefault();
         hideOmniboxSuggestions();
-        return;
-      }
-      if (historyShortcutMatch(e)) {
-        e.preventDefault();
-        toggleHistoryPanel();
         return;
       }
       if (e.key === "Escape" && historyPanel && !historyPanel.hidden) {

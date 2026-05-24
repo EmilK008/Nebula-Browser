@@ -34,6 +34,7 @@ contextBridge.exposeInMainWorld("nebula", {
   getAppInfo: () => ipcRenderer.invoke("nebula-get-app-info"),
   /** Release notes JSON (renderer/changelog.json); loaded in main so file:// shell can read it. */
   getChangelog: () => ipcRenderer.invoke("nebula-get-changelog"),
+  getShortcutManifest: () => ipcRenderer.invoke("nebula-shortcut-manifest"),
   openPath: (fullPath) => ipcRenderer.invoke("nebula-shell-open-path", fullPath),
   showItemInFolder: (fullPath) => ipcRenderer.invoke("nebula-shell-show-item", fullPath),
   getSettings: () => ipcRenderer.invoke("nebula-get-settings"),
