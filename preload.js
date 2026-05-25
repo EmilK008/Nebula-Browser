@@ -108,6 +108,7 @@ contextBridge.exposeInMainWorld("nebula", {
   /** Optional local master password for viewing/copying vault secrets (stored as hash only). */
   accountStatus: () => ipcRenderer.invoke("nebula-account-status"),
   accountCreate: (payload) => ipcRenderer.invoke("nebula-account-create", payload),
+  accountSetUsername: (payload) => ipcRenderer.invoke("nebula-account-set-username", payload),
   accountChange: (payload) => ipcRenderer.invoke("nebula-account-change", payload),
   accountRemove: (payload) => ipcRenderer.invoke("nebula-account-remove", payload),
   accountUnlock: (payload) => ipcRenderer.invoke("nebula-account-unlock", payload),

@@ -425,9 +425,21 @@
           <div id="first-run-step-3" hidden>
             <h2 class="first-run-title">Nebula account (optional)</h2>
             <p class="settings-hint">
-              A local password protects saved logins in the vault. You can create one now or skip and add it later under Settings.
+              Choose a username and password for your local Nebula account (optional). You can skip and add one later under Settings → Privacy.
             </p>
             <div id="first-run-account-form">
+              <label class="settings-field">
+                <span class="settings-label">Username</span>
+                <input
+                  type="text"
+                  id="first-run-account-user"
+                  class="settings-input"
+                  maxlength="32"
+                  spellcheck="false"
+                  autocomplete="username"
+                  placeholder="e.g. emil"
+                />
+              </label>
               <label class="settings-field">
                 <span class="settings-label">Password</span>
                 <input type="password" id="first-run-account-pass" class="settings-input" autocomplete="new-password" />
@@ -649,8 +661,9 @@
             <div id="vault-unlock-overlay" class="vault-unlock-overlay" hidden aria-hidden="true">
               <div class="vault-unlock-card">
                 <p class="vault-unlock-title">Unlock saved passwords</p>
+                <p id="vault-unlock-user" class="vault-unlock-user" hidden></p>
                 <p class="vault-unlock-desc">
-                  Enter your local Nebula account password to view, edit, or copy stored passwords.
+                  Enter your Nebula account password to view, edit, or copy stored passwords.
                 </p>
                 <label class="vault-field">
                   <span class="vault-field-label">Password</span>
@@ -1268,7 +1281,7 @@
                 />
               </label>
             </section>
-            <section class="settings-section" data-settings-category="Privacy" data-settings-keywords="privacy,vault,passwords,saved passwords,unlock,lock,account,security">
+            <section class="settings-section" data-settings-category="Privacy" data-settings-keywords="privacy,vault,passwords,saved passwords,unlock,lock,account,username,security">
               <h3 class="settings-section-title">Privacy</h3>
               <p class="settings-hint">
                 Saved passwords are stored only on this device. Use View → Saved passwords or the button below. Nebula can also
@@ -1288,10 +1301,44 @@
               </p>
               <p class="settings-subsection-label">Local Nebula account</p>
               <p class="settings-hint">
-                Optional master password on this device. Until you unlock, saved passwords stay hidden and cannot be copied or edited
-                (you can still add new entries or remove rows).
+                Optional username and master password on this device. Your username identifies this account for backups and future sync.
+                Until you unlock, saved passwords stay hidden and cannot be copied or edited (you can still add new entries or remove rows).
               </p>
+              <div id="nebula-account-migrate-block" class="nebula-account-block" hidden>
+                <p class="settings-hint">
+                  Your account was created before usernames existed. Choose a username and confirm your password to finish setup.
+                </p>
+                <label class="settings-field">
+                  <span class="settings-label">Username</span>
+                  <input
+                    type="text"
+                    id="nebula-account-migrate-user"
+                    class="settings-input"
+                    maxlength="32"
+                    spellcheck="false"
+                    autocomplete="username"
+                    placeholder="e.g. emil"
+                  />
+                </label>
+                <label class="settings-field">
+                  <span class="settings-label">Password</span>
+                  <input type="password" id="nebula-account-migrate-pass" class="settings-input" autocomplete="current-password" />
+                </label>
+                <button type="button" class="settings-save-btn" id="nebula-account-migrate-btn">Set username</button>
+              </div>
               <div id="nebula-account-create-block" class="nebula-account-block">
+                <label class="settings-field">
+                  <span class="settings-label">Username</span>
+                  <input
+                    type="text"
+                    id="nebula-account-new-user"
+                    class="settings-input"
+                    maxlength="32"
+                    spellcheck="false"
+                    autocomplete="username"
+                    placeholder="3–32 letters, numbers, . _ -"
+                  />
+                </label>
                 <label class="settings-field">
                   <span class="settings-label">New password</span>
                   <input type="password" id="nebula-account-new-pass" class="settings-input" autocomplete="new-password" />
@@ -1303,6 +1350,7 @@
                 <button type="button" class="settings-save-btn" id="nebula-account-create-btn">Create account</button>
               </div>
               <div id="nebula-account-manage-block" class="nebula-account-block" hidden>
+                <p id="nebula-account-signed-in-as" class="settings-hint nebula-account-signed-in" hidden></p>
                 <p class="settings-about-actions">
                   <button type="button" class="settings-action-btn" id="nebula-account-lock-now-btn">Lock vault now</button>
                 </p>

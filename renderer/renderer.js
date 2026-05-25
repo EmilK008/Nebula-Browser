@@ -360,6 +360,7 @@
   const firstRunStep3Back = document.getElementById("first-run-step3-back");
   const firstRunStep3Next = document.getElementById("first-run-step3-next");
   const firstRunStep3Skip = document.getElementById("first-run-step3-skip");
+  const firstRunAccountUser = document.getElementById("first-run-account-user");
   const firstRunAccountPass = document.getElementById("first-run-account-pass");
   const firstRunAccountPass2 = document.getElementById("first-run-account-pass2");
   const firstRunAccountCreate = document.getElementById("first-run-account-create");
@@ -460,11 +461,18 @@
   const vaultImportMode = document.getElementById("vault-import-mode");
   const vaultUnlockOverlay = document.getElementById("vault-unlock-overlay");
   const vaultUnlockPass = document.getElementById("vault-unlock-pass");
+  const vaultUnlockUser = document.getElementById("vault-unlock-user");
   const vaultUnlockError = document.getElementById("vault-unlock-error");
   const vaultUnlockSubmit = document.getElementById("vault-unlock-submit");
   const vaultLockBtn = document.getElementById("vault-lock-btn");
+  const nebulaAccountMigrateBlock = document.getElementById("nebula-account-migrate-block");
+  const nebulaAccountMigrateUser = document.getElementById("nebula-account-migrate-user");
+  const nebulaAccountMigratePass = document.getElementById("nebula-account-migrate-pass");
+  const nebulaAccountMigrateBtn = document.getElementById("nebula-account-migrate-btn");
   const nebulaAccountCreateBlock = document.getElementById("nebula-account-create-block");
   const nebulaAccountManageBlock = document.getElementById("nebula-account-manage-block");
+  const nebulaAccountSignedInAs = document.getElementById("nebula-account-signed-in-as");
+  const nebulaAccountNewUser = document.getElementById("nebula-account-new-user");
   const nebulaAccountNewPass = document.getElementById("nebula-account-new-pass");
   const nebulaAccountConfirmPass = document.getElementById("nebula-account-confirm-pass");
   const nebulaAccountCreateBtn = document.getElementById("nebula-account-create-btn");
@@ -3304,6 +3312,7 @@
   /** Main hides passwords until Nebula account unlock when a local account exists. */
   let vaultSecretsLocked = false;
   let vaultHasLocalAccount = false;
+  let vaultNebulaUsername = null;
   /** @type {ReturnType<typeof setInterval> | null} */
   let vaultUnlockPollId = null;
   let vaultOpenedFromSettings = false;
@@ -3391,6 +3400,15 @@
       vaultUnlockOverlay.hidden = !locked;
       vaultUnlockOverlay.setAttribute("aria-hidden", locked ? "false" : "true");
     }
+    if (vaultUnlockUser) {
+      if (locked && vaultNebulaUsername) {
+        vaultUnlockUser.textContent = `@${vaultNebulaUsername}`;
+        vaultUnlockUser.hidden = false;
+      } else {
+        vaultUnlockUser.textContent = "";
+        vaultUnlockUser.hidden = true;
+      }
+    }
     if (vaultLockBtn) {
       vaultLockBtn.hidden = !vaultHasLocalAccount || vaultSecretsLocked;
     }
@@ -3401,11 +3419,24 @@
     try {
       const st = await window.nebula?.accountStatus?.();
       const has = !!(st && st.hasAccount);
-      nebulaAccountCreateBlock.hidden = has;
-      nebulaAccountManageBlock.hidden = !has;
+      const needsMigrate = !!(st && st.needsUsernameMigration);
+      if (nebulaAccountMigrateBlock) nebulaAccountMigrateBlock.hidden = !needsMigrate;
+      if (nebulaAccountCreateBlock) nebulaAccountCreateBlock.hidden = has || needsMigrate;
+      if (nebulaAccountManageBlock) nebulaAccountManageBlock.hidden = !has || needsMigrate;
+      if (nebulaAccountSignedInAs) {
+        if (has && st.username && !needsMigrate) {
+          nebulaAccountSignedInAs.textContent = `Signed in as @${st.username}`;
+          nebulaAccountSignedInAs.hidden = false;
+        } else {
+          nebulaAccountSignedInAs.textContent = "";
+          nebulaAccountSignedInAs.hidden = true;
+        }
+      }
     } catch {
+      if (nebulaAccountMigrateBlock) nebulaAccountMigrateBlock.hidden = true;
       nebulaAccountCreateBlock.hidden = false;
       nebulaAccountManageBlock.hidden = true;
+      if (nebulaAccountSignedInAs) nebulaAccountSignedInAs.hidden = true;
     }
   }
 
@@ -3598,19 +3629,24 @@
         vaultEntriesCache = raw.entries;
         vaultSecretsLocked = !!raw.secretsLocked;
         vaultHasLocalAccount = !!raw.hasLocalAccount;
+        vaultNebulaUsername =
+          typeof raw.nebulaUsername === "string" && raw.nebulaUsername.trim() ? raw.nebulaUsername.trim() : null;
       } else if (Array.isArray(raw)) {
         vaultEntriesCache = raw;
         vaultSecretsLocked = false;
         vaultHasLocalAccount = false;
+        vaultNebulaUsername = null;
       } else {
         vaultEntriesCache = [];
         vaultSecretsLocked = false;
         vaultHasLocalAccount = false;
+        vaultNebulaUsername = null;
       }
     } catch {
       vaultEntriesCache = [];
       vaultSecretsLocked = false;
       vaultHasLocalAccount = false;
+      vaultNebulaUsername = null;
     }
     updateVaultUnlockChrome();
     await refreshVaultHint();
@@ -5311,8 +5347,11 @@
     }
     profilePackPendingImport = { pack: r.pack, available: r.available || {}, source: r.source || {} };
     const srcName = r.source?.profileName || r.source?.profileId || "profile";
+    const srcUser = r.source?.nebulaUsername ? `@${r.source.nebulaUsername}` : "";
     if (profilePackImportSourceHint) {
-      profilePackImportSourceHint.textContent = `From backup: ${srcName}. Choose what to import.`;
+      profilePackImportSourceHint.textContent = srcUser
+        ? `From backup: ${srcName} (${srcUser}). Choose what to import.`
+        : `From backup: ${srcName}. Choose what to import.`;
     }
     if (profilePackNewName) profilePackNewName.value = r.source?.profileName || "Imported";
     buildProfilePackImportCheckboxes(r.available || {});
@@ -8526,7 +8565,36 @@
     await loadVaultEntriesFromMain();
   });
 
+  nebulaAccountMigrateBtn?.addEventListener("click", async () => {
+    const user = nebulaAccountMigrateUser?.value ?? "";
+    const pwd = nebulaAccountMigratePass?.value ?? "";
+    setNebulaAccountSettingsMessage("");
+    try {
+      const r = await window.nebula?.accountSetUsername?.({ username: user, password: pwd });
+      if (r?.ok) {
+        if (nebulaAccountMigrateUser) nebulaAccountMigrateUser.value = "";
+        if (nebulaAccountMigratePass) nebulaAccountMigratePass.value = "";
+        setNebulaAccountSettingsMessage(`Username set to @${r.username || user}.`);
+        await refreshNebulaAccountSettingsUI();
+        await loadVaultEntriesFromMain();
+        return;
+      }
+      if (r?.error === "bad_password") {
+        setNebulaAccountSettingsMessage("Wrong password.");
+        return;
+      }
+      if (r?.message) {
+        setNebulaAccountSettingsMessage(r.message);
+        return;
+      }
+      setNebulaAccountSettingsMessage("Could not set username.");
+    } catch {
+      setNebulaAccountSettingsMessage("Could not set username.");
+    }
+  });
+
   nebulaAccountCreateBtn?.addEventListener("click", async () => {
+    const user = nebulaAccountNewUser?.value ?? "";
     const a = nebulaAccountNewPass?.value ?? "";
     const b = nebulaAccountConfirmPass?.value ?? "";
     setNebulaAccountSettingsMessage("");
@@ -8535,20 +8603,26 @@
       return;
     }
     try {
-      const r = await window.nebula?.accountCreate?.({ password: a });
+      const r = await window.nebula?.accountCreate?.({ username: user, password: a });
       if (r?.ok) {
+        if (nebulaAccountNewUser) nebulaAccountNewUser.value = "";
         if (nebulaAccountNewPass) nebulaAccountNewPass.value = "";
         if (nebulaAccountConfirmPass) nebulaAccountConfirmPass.value = "";
+        const label = r.username ? `@${r.username}` : "account";
         setNebulaAccountSettingsMessage(
-          "Local Nebula account created. Saved passwords stay locked until you unlock (about 15 minutes per unlock)."
+          `Local Nebula account ${label} created. Saved passwords stay locked until you unlock (about 15 minutes per unlock).`
         );
         await refreshNebulaAccountSettingsUI();
+        return;
+      }
+      if (r?.message) {
+        setNebulaAccountSettingsMessage(r.message);
         return;
       }
       if (r?.error === "weak") {
         const st = await window.nebula?.accountStatus?.();
         const n = st?.minPasswordLength ?? 8;
-        setNebulaAccountSettingsMessage(`Use at least ${n} characters.`);
+        setNebulaAccountSettingsMessage(`Use at least ${n} characters for the password.`);
         return;
       }
       setNebulaAccountSettingsMessage("Could not create account.");
@@ -9079,9 +9153,18 @@
       showStep(3);
       const st = (await window.nebula?.accountStatus?.()) || {};
       const hasAcct = !!st.hasAccount;
+      const needsMigrate = !!st.needsUsernameMigration;
       const minLen = typeof st.minPasswordLength === "number" ? st.minPasswordLength : 8;
       if (firstRunAccountForm) firstRunAccountForm.hidden = hasAcct;
-      if (firstRunAccountSkipHint) firstRunAccountSkipHint.hidden = !hasAcct;
+      if (firstRunAccountSkipHint) {
+        firstRunAccountSkipHint.hidden = !hasAcct;
+        if (hasAcct && needsMigrate) {
+          firstRunAccountSkipHint.textContent =
+            "Finish setup: choose a username under Settings → Privacy (Local Nebula account).";
+          firstRunAccountSkipHint.hidden = false;
+        }
+      }
+      if (firstRunAccountUser) firstRunAccountUser.value = "";
       if (firstRunAccountPass) firstRunAccountPass.value = "";
       if (firstRunAccountPass2) firstRunAccountPass2.value = "";
 
@@ -9128,11 +9211,13 @@
               }
               return;
             }
-            const r = await window.nebula?.accountCreate?.({ password: a });
+            const user = firstRunAccountUser?.value || "";
+            const r = await window.nebula?.accountCreate?.({ username: user, password: a });
             if (!r?.ok) {
               if (firstRunMsg) {
                 firstRunMsg.textContent =
-                  r?.error === "exists" ? "Account already exists." : "Could not create account.";
+                  r?.message ||
+                  (r?.error === "exists" ? "Account already exists." : "Could not create account.");
                 firstRunMsg.hidden = false;
               }
               return;

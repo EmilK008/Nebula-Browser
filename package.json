@@ -1,6 +1,6 @@
 {
   "name": "nebula-browser",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "description": "A small Electron shell browser with a custom chrome",
   "nebula": {
     "updateRepo": "EmilK008/Nebula-Browser"

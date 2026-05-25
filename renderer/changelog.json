@@ -1,6 +1,13 @@
 {
   "entries": [
     {
+      "version": "1.2.2",
+      "date": "2026-05-25",
+      "added": [
+        "Local Nebula accounts now use a username plus password: each account gets a stable account id for backups and future sync. Existing password-only accounts are prompted to choose a username in Settings → Privacy. Profile packs include account metadata when exported."
+      ]
+    },
+    {
       "version": "1.2.1",
       "date": "2026-05-25",
       "added": [

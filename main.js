@@ -22,6 +22,7 @@ const { Readable } = require("stream");
 const nebulaAdblock = require("./adblock");
 const nebulaShortcuts = require("./lib/keyboard-shortcuts");
 const nebulaProfilePack = require("./lib/profile-pack");
+const nebulaAccountLib = require("./lib/nebula-account");
 
 /** guest `webContents.id` → `<webview partition=…>` string (OAuth popups + window.open must match). */
 const guestPartitionByWcId = new Map();
@@ -3909,7 +3910,7 @@ ipcMain.handle("nebula-guest-save-pdf", async (event, payload) => {
   }
 });
 
-/** —— Local Nebula account (master password to view / copy vault secrets) */
+/** —— Local Nebula account (username + master password for vault / future sync) */
 
 const NEBULA_ACCOUNT_MIN_LENGTH = 8;
 const NEBULA_ACCOUNT_PBKDF2_ITER = 310000;
@@ -3933,13 +3934,45 @@ function loadNebulaAccountRecord() {
     if (typeof o.salt !== "string" || typeof o.hash !== "string") return null;
     const iterations =
       typeof o.iterations === "number" && o.iterations >= 100000 ? o.iterations : NEBULA_ACCOUNT_PBKDF2_ITER;
+    let accountId =
+      typeof o.accountId === "string" && o.accountId.trim() ? o.accountId.trim().slice(0, 64) : "";
+    if (!accountId) accountId = crypto.randomUUID();
+    let username = null;
+    if (typeof o.username === "string" && o.username.trim()) {
+      const v = nebulaAccountLib.validateUsername(o.username);
+      if (v.ok) username = v.username;
+    }
     return {
+      accountId,
+      username,
       salt: Buffer.from(o.salt, "base64"),
       hashHex: o.hash,
       iterations,
+      needsUsernameMigration: !username,
     };
   } catch {
     return null;
+  }
+}
+
+/** Assign and persist `accountId` for legacy v1 files (password-only) without rehashing. */
+function ensureNebulaAccountFileHasAccountId() {
+  try {
+    const p = nebulaAccountStorePath();
+    const o = JSON.parse(fs.readFileSync(p, "utf8"));
+    if (!o || typeof o !== "object") return;
+    if (typeof o.salt !== "string" || typeof o.hash !== "string") return;
+    if (typeof o.accountId === "string" && o.accountId.trim()) return;
+    fs.writeFileSync(
+      p,
+      JSON.stringify({
+        ...o,
+        v: nebulaAccountLib.NEBULA_ACCOUNT_RECORD_VERSION,
+        accountId: crypto.randomUUID(),
+      })
+    );
+  } catch {
+    /* */
   }
 }
 
@@ -4002,19 +4035,32 @@ function promoteVaultUnlockToSessionIfEnabled() {
   }
 }
 
-function saveNebulaAccountPasswordHash(password) {
+function writeNebulaAccountFile({ accountId, username, password }) {
   const salt = crypto.randomBytes(16);
   const iterations = NEBULA_ACCOUNT_PBKDF2_ITER;
   const hashBuf = crypto.pbkdf2Sync(password, salt, iterations, NEBULA_ACCOUNT_KEYLEN, "sha256");
   fs.writeFileSync(
     nebulaAccountStorePath(),
     JSON.stringify({
-      v: 1,
+      v: nebulaAccountLib.NEBULA_ACCOUNT_RECORD_VERSION,
+      accountId,
+      username,
       salt: salt.toString("base64"),
       hash: hashBuf.toString("hex"),
       iterations,
     })
   );
+}
+
+function saveNebulaAccountPasswordHash(password) {
+  const rec = loadNebulaAccountRecord();
+  if (!rec || !rec.username) return false;
+  writeNebulaAccountFile({
+    accountId: rec.accountId,
+    username: rec.username,
+    password,
+  });
+  return true;
 }
 
 function deleteNebulaAccountFile() {
@@ -4027,7 +4073,9 @@ function deleteNebulaAccountFile() {
 }
 
 ipcMain.handle("nebula-account-status", () => {
-  const hasAccount = hasNebulaLocalAccount();
+  ensureNebulaAccountFileHasAccountId();
+  const rec = loadNebulaAccountRecord();
+  const hasAccount = !!rec;
   const unlocked = isNebulaVaultSecretsUnlocked();
   let keepUntilQuit = false;
   try {
@@ -4038,22 +4086,55 @@ ipcMain.handle("nebula-account-status", () => {
   return {
     hasAccount,
     unlocked,
+    username: rec?.username || null,
+    accountId: rec?.accountId || null,
+    needsUsernameMigration: !!(rec && rec.needsUsernameMigration),
     unlockExpiresAt:
       hasAccount && unlocked && !nebulaAccountSessionUnlockPersistent ? nebulaAccountUnlockUntil : null,
     unlockDurationMs: NEBULA_ACCOUNT_UNLOCK_MS,
     keepUnlockedUntilQuit: keepUntilQuit,
     sessionUnlock: nebulaAccountSessionUnlockPersistent,
     minPasswordLength: NEBULA_ACCOUNT_MIN_LENGTH,
+    minUsernameLength: nebulaAccountLib.NEBULA_ACCOUNT_USERNAME_MIN,
+    maxUsernameLength: nebulaAccountLib.NEBULA_ACCOUNT_USERNAME_MAX,
   };
 });
 
 ipcMain.handle("nebula-account-create", (_e, payload) => {
   const pwd = typeof payload?.password === "string" ? payload.password : "";
+  const userIn = typeof payload?.username === "string" ? payload.username : "";
   if (hasNebulaLocalAccount()) return { ok: false, error: "exists" };
+  const uv = nebulaAccountLib.validateUsername(userIn);
+  if (!uv.ok) {
+    return { ok: false, error: uv.error, message: nebulaAccountLib.usernameErrorMessage(uv.error) };
+  }
   if (pwd.length < NEBULA_ACCOUNT_MIN_LENGTH) return { ok: false, error: "weak" };
-  saveNebulaAccountPasswordHash(pwd);
+  writeNebulaAccountFile({
+    accountId: crypto.randomUUID(),
+    username: uv.username,
+    password: pwd,
+  });
   setNebulaAccountUnlockSession();
-  return { ok: true };
+  return { ok: true, username: uv.username, accountId: loadNebulaAccountRecord()?.accountId || null };
+});
+
+ipcMain.handle("nebula-account-set-username", (_e, payload) => {
+  const pwd = typeof payload?.password === "string" ? payload.password : "";
+  const userIn = typeof payload?.username === "string" ? payload.username : "";
+  const rec = loadNebulaAccountRecord();
+  if (!rec) return { ok: false, error: "none" };
+  if (rec.username && !rec.needsUsernameMigration) return { ok: false, error: "username_set" };
+  if (!verifyNebulaAccountPassword(pwd)) return { ok: false, error: "bad_password" };
+  const uv = nebulaAccountLib.validateUsername(userIn);
+  if (!uv.ok) {
+    return { ok: false, error: uv.error, message: nebulaAccountLib.usernameErrorMessage(uv.error) };
+  }
+  writeNebulaAccountFile({
+    accountId: rec.accountId,
+    username: uv.username,
+    password: pwd,
+  });
+  return { ok: true, username: uv.username, accountId: rec.accountId };
 });
 
 ipcMain.handle("nebula-account-change", (_e, payload) => {
@@ -4062,7 +4143,7 @@ ipcMain.handle("nebula-account-change", (_e, payload) => {
   if (!hasNebulaLocalAccount()) return { ok: false, error: "none" };
   if (!verifyNebulaAccountPassword(cur)) return { ok: false, error: "bad_password" };
   if (next.length < NEBULA_ACCOUNT_MIN_LENGTH) return { ok: false, error: "weak" };
-  saveNebulaAccountPasswordHash(next);
+  if (!saveNebulaAccountPasswordHash(next)) return { ok: false, error: "needs_username" };
   setNebulaAccountUnlockSession();
   return { ok: true };
 });
@@ -4335,6 +4416,7 @@ ipcMain.handle("nebula-vault-add-session-placeholder", async (_e, payload) => {
 });
 
 ipcMain.handle("nebula-vault-list", () => {
+  ensureNebulaAccountFileHasAccountId();
   const entries = loadVaultEntries();
   const locked = hasNebulaLocalAccount() && !isNebulaVaultSecretsUnlocked();
   const masked = entries.map((e) => {
@@ -4345,10 +4427,13 @@ ipcMain.handle("nebula-vault-list", () => {
     }
     return { ...e, passwordPresent };
   });
+  const acct = loadNebulaAccountRecord();
   return {
     entries: masked,
     secretsLocked: locked,
     hasLocalAccount: hasNebulaLocalAccount(),
+    nebulaUsername: acct?.username || null,
+    needsUsernameMigration: !!(acct && acct.needsUsernameMigration),
   };
 });
 
@@ -4742,11 +4827,14 @@ ipcMain.handle("nebula-profile-pack-export", async (event, payload) => {
   if (includeVault) {
     vaultEntries = loadVaultEntries();
   }
+  const acct = loadNebulaAccountRecord();
   const inner = nebulaProfilePack.buildInnerPack({
     profileMeta: {
       profileId,
       profileName,
       nebulaVersion: typeof NEBULA_PKG.version === "string" ? NEBULA_PKG.version : "",
+      accountId: acct?.accountId || null,
+      nebulaUsername: acct?.username || null,
     },
     options: {
       settings: !!options.settings,

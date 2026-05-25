@@ -3254,6 +3254,17 @@ body.startup-splash-done .content {
   margin-bottom: 0.5rem;
 }
 
+.vault-unlock-user {
+  margin: 0 0 0.35rem;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--accent, #6eb5ff);
+}
+
+.nebula-account-signed-in {
+  font-weight: 500;
+}
+
 .vault-panel {
   position: fixed;
   inset: 0;
