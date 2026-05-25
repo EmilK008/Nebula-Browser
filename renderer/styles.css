@@ -3232,6 +3232,28 @@ body.startup-splash-done .content {
 }
 
 /* —— Saved passwords vault */
+.profile-pack-checks {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin: 0.75rem 0;
+}
+
+.profile-pack-mode-fieldset {
+  border: none;
+  margin: 0.75rem 0;
+  padding: 0;
+}
+
+.profile-pack-mode-fieldset .first-run-radio {
+  display: block;
+  margin: 0.35rem 0;
+}
+
+.profile-pack-msg {
+  margin-bottom: 0.5rem;
+}
+
 .vault-panel {
   position: fixed;
   inset: 0;

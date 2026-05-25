@@ -413,6 +413,9 @@
               <button type="button" class="settings-action-btn" id="first-run-import-edge">Edge (this PC)</button>
               <button type="button" class="settings-action-btn" id="first-run-import-firefox">Firefox (this PC)</button>
             </div>
+            <div class="first-run-browser-row">
+              <button type="button" class="settings-action-btn" id="first-run-import-profile">Import Nebula profile…</button>
+            </div>
             <div class="first-run-actions">
               <button type="button" class="settings-action-btn" id="first-run-step2-back">Back</button>
               <button type="button" class="settings-action-btn" id="first-run-step2-skip">Skip import</button>
@@ -501,6 +504,60 @@
             <button type="button" class="settings-action-btn" id="password-save-offer-never">Never for this site</button>
             <button type="button" class="settings-action-btn" id="password-save-offer-dismiss">Not now</button>
             <button type="button" class="settings-save-btn" id="password-save-offer-save">Save</button>
+          </div>
+        </div>
+      </div>
+      <div id="profile-pack-panel" class="vault-panel profile-pack-panel" hidden aria-hidden="true">
+        <div class="vault-panel-backdrop" id="profile-pack-backdrop" aria-hidden="true"></div>
+        <div class="vault-panel-dialog" role="dialog" aria-modal="true" aria-labelledby="profile-pack-title">
+          <div class="vault-panel-header">
+            <h2 id="profile-pack-title" class="vault-panel-title">Profile backup</h2>
+            <button type="button" class="vault-panel-close" id="profile-pack-close" title="Close" aria-label="Close profile backup">
+              ✕
+            </button>
+          </div>
+          <div class="vault-panel-body">
+            <p id="profile-pack-msg" class="settings-hint profile-pack-msg" hidden></p>
+            <div id="profile-pack-export-view">
+              <p class="settings-hint">Choose what to include. The file is encrypted with your password.</p>
+              <div class="profile-pack-checks">
+                <label class="settings-checkbox-row"><input type="checkbox" id="profile-pack-exp-settings" checked /> <span>Settings (appearance, search, shortcuts, AI prefs)</span></label>
+                <label class="settings-checkbox-row"><input type="checkbox" id="profile-pack-exp-bookmarks" checked /> <span>Bookmarks</span></label>
+                <label class="settings-checkbox-row"><input type="checkbox" id="profile-pack-exp-history" /> <span>History</span></label>
+                <label class="settings-checkbox-row"><input type="checkbox" id="profile-pack-exp-ai" /> <span>AI chats &amp; AI search history</span></label>
+                <label class="settings-checkbox-row"><input type="checkbox" id="profile-pack-exp-vault" /> <span>Vault (logins &amp; API keys)</span></label>
+              </div>
+              <label class="settings-field">
+                <span class="settings-label" id="profile-pack-password-label">Password</span>
+                <input type="password" id="profile-pack-password" class="settings-input" autocomplete="current-password" />
+              </label>
+              <p id="profile-pack-password-hint" class="settings-hint"></p>
+              <button type="button" class="settings-save-btn" id="profile-pack-export-go">Export to file…</button>
+            </div>
+            <div id="profile-pack-import-view" hidden>
+              <div id="profile-pack-import-step-pick">
+                <p class="settings-hint">Enter the password used when the pack was exported, then choose the file.</p>
+                <label class="settings-field">
+                  <span class="settings-label">Password</span>
+                  <input type="password" id="profile-pack-import-password" class="settings-input" autocomplete="current-password" />
+                </label>
+                <button type="button" class="settings-save-btn" id="profile-pack-import-pick">Choose file…</button>
+              </div>
+              <div id="profile-pack-import-step-apply" hidden>
+                <p class="settings-hint" id="profile-pack-import-source-hint"></p>
+                <div class="profile-pack-checks" id="profile-pack-import-checks"></div>
+                <fieldset class="profile-pack-mode-fieldset">
+                  <legend class="settings-label">Import into</legend>
+                  <label class="first-run-radio"><input type="radio" name="profile-pack-import-mode" value="merge" checked /> Merge into current profile</label>
+                  <label class="first-run-radio"><input type="radio" name="profile-pack-import-mode" value="newProfile" /> Add as new profile</label>
+                </fieldset>
+                <label class="settings-field" id="profile-pack-new-name-wrap" hidden>
+                  <span class="settings-label">New profile name</span>
+                  <input type="text" id="profile-pack-new-name" class="settings-input" maxlength="64" placeholder="Imported" spellcheck="false" autocomplete="off" />
+                </label>
+                <button type="button" class="settings-save-btn" id="profile-pack-import-go">Import</button>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -1133,7 +1190,7 @@
                 <button type="button" class="settings-action-btn" id="settings-bookmarks-export-json">Export JSON…</button>
               </div>
             </section>
-            <section class="settings-section" data-settings-category="Profiles &amp; private tabs" data-settings-keywords="profiles,private,incognito,tabs,cookies,session">
+            <section class="settings-section" data-settings-category="Profiles &amp; private tabs" data-settings-keywords="profiles,private,incognito,tabs,cookies,session,export,import,backup,sync">
               <h3 class="settings-section-title">Profiles &amp; private tabs</h3>
               <p class="settings-hint">
                 <strong>Profiles</strong> use separate cookies, saved sessions, <strong>bookmarks</strong>, and <strong>history</strong> (each profile has its own bar, address suggestions, and local storage keys). Switch profile below, click Save, and Nebula will restart automatically. Default migrates your previous global bookmarks and history the first time they load.
@@ -1143,6 +1200,13 @@
                 <span class="settings-label">Active profile</span>
                 <select id="settings-profile-select" class="settings-select"></select>
               </label>
+              <p class="settings-hint">
+                <strong>Backup &amp; restore</strong> — export an encrypted profile pack (settings, bookmarks, history, AI chats, vault) or import one on this or another PC. Password is your local Nebula account password when you have an account; otherwise use an export passphrase (8+ characters).
+              </p>
+              <div class="settings-bookmarks-row">
+                <button type="button" class="settings-action-btn" id="settings-profile-export">Export profile…</button>
+                <button type="button" class="settings-action-btn" id="settings-profile-import">Import profile…</button>
+              </div>
               <div class="settings-bookmarks-row">
                 <button type="button" class="settings-action-btn" id="settings-profile-add">Add profile…</button>
                 <button type="button" class="settings-action-btn" id="settings-profile-remove">Remove selected</button>

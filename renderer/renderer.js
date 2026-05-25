@@ -379,6 +379,29 @@
   const settingsProfileNewName = document.getElementById("settings-profile-new-name");
   const settingsProfileAddConfirm = document.getElementById("settings-profile-add-confirm");
   const settingsProfileAddCancel = document.getElementById("settings-profile-add-cancel");
+  const settingsProfileExport = document.getElementById("settings-profile-export");
+  const settingsProfileImport = document.getElementById("settings-profile-import");
+  const profilePackPanel = document.getElementById("profile-pack-panel");
+  const profilePackBackdrop = document.getElementById("profile-pack-backdrop");
+  const profilePackClose = document.getElementById("profile-pack-close");
+  const profilePackMsg = document.getElementById("profile-pack-msg");
+  const profilePackExportView = document.getElementById("profile-pack-export-view");
+  const profilePackImportView = document.getElementById("profile-pack-import-view");
+  const profilePackImportStepPick = document.getElementById("profile-pack-import-step-pick");
+  const profilePackImportStepApply = document.getElementById("profile-pack-import-step-apply");
+  const profilePackPassword = document.getElementById("profile-pack-password");
+  const profilePackPasswordHint = document.getElementById("profile-pack-password-hint");
+  const profilePackExportGo = document.getElementById("profile-pack-export-go");
+  const profilePackImportPassword = document.getElementById("profile-pack-import-password");
+  const profilePackImportPick = document.getElementById("profile-pack-import-pick");
+  const profilePackImportSourceHint = document.getElementById("profile-pack-import-source-hint");
+  const profilePackImportChecks = document.getElementById("profile-pack-import-checks");
+  const profilePackNewNameWrap = document.getElementById("profile-pack-new-name-wrap");
+  const profilePackNewName = document.getElementById("profile-pack-new-name");
+  const profilePackImportGo = document.getElementById("profile-pack-import-go");
+  const firstRunImportProfile = document.getElementById("first-run-import-profile");
+  /** @type {{ pack: object, available: object, source: object } | null} */
+  let profilePackPendingImport = null;
   const btnSettings = document.getElementById("btn-settings");
   const settingsBookmarksImportSource = document.getElementById("settings-bookmarks-import-source");
   const settingsBookmarksImportMerge = document.getElementById("settings-bookmarks-import-merge");
@@ -4609,6 +4632,7 @@
     closeChangelogPanel();
     closePasswordSaveOfferPanel();
     closeVaultPanel();
+    closeProfilePackPanel();
     settingsPanel.hidden = true;
     settingsPanel.setAttribute("aria-hidden", "true");
     scheduleRestoreGuestFocus();
@@ -4697,6 +4721,7 @@
     if (settingsPanel && !settingsPanel.hidden) return true;
     if (vaultPanel && !vaultPanel.hidden) return true;
     if (firstRunPanel && !firstRunPanel.hidden) return true;
+    if (profilePackPanel && !profilePackPanel.hidden) return true;
     if (permissionPromptPanel && !permissionPromptPanel.hidden) return true;
     if (tabGroupRenamePanel && !tabGroupRenamePanel.hidden) return true;
     const ae = document.activeElement;
@@ -5004,6 +5029,432 @@
     saveBookmarksToStorage();
     renderBookmarksBar();
     updateBookmarkStar();
+  }
+
+  function bookmarksStorageKeyForProfile(profileId) {
+    return `nebula-bookmarks-v2-${sanitizeProfileIdForSession(profileId)}`;
+  }
+
+  function historyStorageKeyForProfile(profileId) {
+    return `nebula-history-v2-${sanitizeProfileIdForSession(profileId)}`;
+  }
+
+  function aiConversationsStorageKeyForProfile(profileId) {
+    return `nebula-ai-conversations-v1-${sanitizeProfileIdForSession(profileId)}`;
+  }
+
+  function aiSearchHistoryStorageKeyForProfile(profileId) {
+    return `nebula-ai-search-history-v1-${sanitizeProfileIdForSession(profileId || "default")}`;
+  }
+
+  function loadBookmarksArrayForProfile(profileId) {
+    try {
+      const key = bookmarksStorageKeyForProfile(profileId);
+      let raw = localStorage.getItem(key);
+      if (!raw && sanitizeProfileIdForSession(profileId) === "default") {
+        raw = localStorage.getItem(BOOKMARKS_LEGACY_V2);
+      }
+      const arr = raw ? JSON.parse(raw) : [];
+      return Array.isArray(arr)
+        ? arr.filter((x) => x && typeof x.url === "string").map((x) => ({ url: x.url, title: x.title || "" }))
+        : [];
+    } catch {
+      return [];
+    }
+  }
+
+  function saveBookmarksArrayForProfile(profileId, arr) {
+    localStorage.setItem(bookmarksStorageKeyForProfile(profileId), JSON.stringify(arr));
+  }
+
+  function loadHistoryArrayForProfile(profileId) {
+    try {
+      const key = historyStorageKeyForProfile(profileId);
+      let raw = localStorage.getItem(key);
+      if (!raw && sanitizeProfileIdForSession(profileId) === "default") {
+        raw = localStorage.getItem(HISTORY_LEGACY_V1);
+      }
+      const arr = raw ? JSON.parse(raw) : [];
+      if (!Array.isArray(arr)) return [];
+      return arr
+        .filter((x) => x && typeof x.url === "string" && typeof x.visitedAt === "number")
+        .map((x) => ({
+          url: x.url,
+          title: typeof x.title === "string" ? x.title : "",
+          visitedAt: x.visitedAt,
+        }));
+    } catch {
+      return [];
+    }
+  }
+
+  function saveHistoryArrayForProfile(profileId, entries) {
+    localStorage.setItem(historyStorageKeyForProfile(profileId), JSON.stringify(entries.slice(0, HISTORY_MAX)));
+  }
+
+  function mergeHistoryArrays(existing, incoming) {
+    const seen = new Set(existing.map((x) => `${x.url}|${x.visitedAt}`));
+    const out = [...existing];
+    for (const x of incoming || []) {
+      if (!x || typeof x.url !== "string" || typeof x.visitedAt !== "number") continue;
+      const k = `${x.url}|${x.visitedAt}`;
+      if (seen.has(k)) continue;
+      seen.add(k);
+      out.push({
+        url: x.url,
+        title: typeof x.title === "string" ? x.title : "",
+        visitedAt: x.visitedAt,
+      });
+    }
+    out.sort((a, b) => b.visitedAt - a.visitedAt);
+    return out.slice(0, HISTORY_MAX);
+  }
+
+  function mergeAiConversationsStores(existingStore, incomingStore) {
+    const base = existingStore && typeof existingStore === "object" ? existingStore : { v: AI_CONVERSATIONS_STORE_VERSION, lastOpenedId: "", items: [] };
+    const incItems = incomingStore && Array.isArray(incomingStore.items) ? incomingStore.items : [];
+    const byId = new Map();
+    for (const it of base.items || []) {
+      if (it && it.id) byId.set(it.id, it);
+    }
+    for (const it of incItems) {
+      if (!it || typeof it.id !== "string" || !it.id.trim()) continue;
+      const id = it.id.trim().slice(0, 80);
+      const cur = byId.get(id);
+      const updatedAt = Number(it.updatedAt) || 0;
+      if (!cur || (Number(cur.updatedAt) || 0) < updatedAt) {
+        byId.set(id, {
+          id,
+          title: typeof it.title === "string" ? it.title.trim().slice(0, 120) : "Chat",
+          updatedAt,
+          messages: sanitizeAiMessagesForStorage(it.messages),
+        });
+      }
+    }
+    const items = [...byId.values()].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, AI_CONVERSATIONS_MAX_ITEMS);
+    let lastOpenedId = typeof incomingStore?.lastOpenedId === "string" ? incomingStore.lastOpenedId.trim().slice(0, 80) : "";
+    if (lastOpenedId && !items.some((x) => x.id === lastOpenedId)) lastOpenedId = items[0]?.id || "";
+    if (!lastOpenedId && base.lastOpenedId && items.some((x) => x.id === base.lastOpenedId)) {
+      lastOpenedId = base.lastOpenedId;
+    }
+    return { v: AI_CONVERSATIONS_STORE_VERSION, lastOpenedId, items };
+  }
+
+  function mergeAiSearchHistoryLists(existing, incoming) {
+    const out = [];
+    const seen = new Set();
+    for (const q of [...(incoming || []), ...(existing || [])]) {
+      const s = String(q || "").trim();
+      if (!s || seen.has(s)) continue;
+      seen.add(s);
+      out.push(s);
+    }
+    return out.slice(0, 50);
+  }
+
+  function showProfilePackMsg(text, isError) {
+    if (!profilePackMsg) return;
+    if (!text) {
+      profilePackMsg.hidden = true;
+      profilePackMsg.textContent = "";
+      return;
+    }
+    profilePackMsg.hidden = false;
+    profilePackMsg.textContent = text;
+    profilePackMsg.style.color = isError ? "var(--danger, #e85d5d)" : "";
+  }
+
+  async function refreshProfilePackPasswordHint() {
+    if (!profilePackPasswordHint) return;
+    try {
+      const st = await window.nebula?.accountStatus?.();
+      if (st?.hasAccount) {
+        profilePackPasswordHint.textContent =
+          "Use your local Nebula account password (Settings → Privacy). Required to export vault data.";
+      } else {
+        profilePackPasswordHint.textContent =
+          "No local account yet — use a passphrase (8+ characters). Create an account before exporting vault logins and API keys.";
+      }
+    } catch {
+      profilePackPasswordHint.textContent = "Password encrypts the backup file.";
+    }
+  }
+
+  function closeProfilePackPanel() {
+    if (!profilePackPanel || profilePackPanel.hidden) return;
+    profilePackPanel.hidden = true;
+    profilePackPanel.setAttribute("aria-hidden", "true");
+    profilePackPendingImport = null;
+    showProfilePackMsg("");
+    scheduleRestoreGuestFocus();
+  }
+
+  function openProfilePackPanel(mode) {
+    if (!profilePackPanel) return;
+    rejectActivePermissionIfAny();
+    profilePackPendingImport = null;
+    showProfilePackMsg("");
+    const isExport = mode === "export";
+    const titleEl = document.getElementById("profile-pack-title");
+    if (titleEl) titleEl.textContent = isExport ? "Export profile" : "Import profile";
+    if (profilePackExportView) profilePackExportView.hidden = !isExport;
+    if (profilePackImportView) profilePackImportView.hidden = isExport;
+    if (profilePackImportStepPick) profilePackImportStepPick.hidden = false;
+    if (profilePackImportStepApply) profilePackImportStepApply.hidden = true;
+    if (profilePackImportPassword) profilePackImportPassword.value = "";
+    if (profilePackPassword) profilePackPassword.value = "";
+    void refreshProfilePackPasswordHint();
+    profilePackPanel.hidden = false;
+    profilePackPanel.setAttribute("aria-hidden", "false");
+  }
+
+  function readProfilePackExportOptionsFromForm() {
+    const chk = (id) => !!document.getElementById(id)?.checked;
+    return {
+      settings: chk("profile-pack-exp-settings"),
+      bookmarks: chk("profile-pack-exp-bookmarks"),
+      history: chk("profile-pack-exp-history"),
+      aiChat: chk("profile-pack-exp-ai"),
+      vault: chk("profile-pack-exp-vault"),
+    };
+  }
+
+  function collectRendererSectionsForProfileExport(options) {
+    const pid = appSettings.activeProfileId || "default";
+    const sections = {};
+    if (options.bookmarks) sections.bookmarks = loadBookmarksArrayForProfile(pid);
+    if (options.history) sections.history = loadHistoryArrayForProfile(pid);
+    if (options.aiChat) {
+      sections.aiConversations = loadAiConversationsStore();
+      sections.aiSearchHistory = loadAiSearchHistory();
+    }
+    return sections;
+  }
+
+  async function runProfilePackExport() {
+    const nebula = window.nebula;
+    if (!nebula?.profilePackExport) {
+      alert("Profile export is only available in the Nebula app.");
+      return;
+    }
+    const options = readProfilePackExportOptionsFromForm();
+    if (!options.settings && !options.bookmarks && !options.history && !options.aiChat && !options.vault) {
+      showProfilePackMsg("Select at least one category to export.", true);
+      return;
+    }
+    const password = profilePackPassword?.value || "";
+    const prof = (appSettings.profiles || []).find((p) => p && p.id === appSettings.activeProfileId);
+    const r = await nebula.profilePackExport({
+      password,
+      options,
+      profileId: appSettings.activeProfileId || "default",
+      profileName: prof?.name || appSettings.activeProfileId || "Default",
+      rendererSections: collectRendererSectionsForProfileExport(options),
+    });
+    if (!r || r.canceled) return;
+    if (!r.ok) {
+      showProfilePackMsg(r.message || r.error || "Export failed.", true);
+      return;
+    }
+    showProfilePackMsg(`Saved to ${r.path || "file"}.`, false);
+    if (profilePackPassword) profilePackPassword.value = "";
+  }
+
+  function buildProfilePackImportCheckboxes(available) {
+    if (!profilePackImportChecks) return;
+    profilePackImportChecks.replaceChildren();
+    const defs = [
+      ["settings", "Settings", available.settings],
+      ["bookmarks", "Bookmarks", available.bookmarks],
+      ["history", "History", available.history],
+      ["aiChat", "AI chats & AI search history", available.aiChat],
+      ["vault", "Vault (logins & API keys)", available.vault],
+    ];
+    for (const [key, label, on] of defs) {
+      if (!on) continue;
+      const lab = document.createElement("label");
+      lab.className = "settings-checkbox-row";
+      const inp = document.createElement("input");
+      inp.type = "checkbox";
+      inp.dataset.packSection = key;
+      inp.checked = true;
+      lab.appendChild(inp);
+      const span = document.createElement("span");
+      span.textContent = label;
+      lab.appendChild(span);
+      profilePackImportChecks.appendChild(lab);
+    }
+  }
+
+  function readProfilePackImportOptionsFromForm() {
+    const options = { settings: false, bookmarks: false, history: false, aiChat: false, vault: false };
+    profilePackImportChecks?.querySelectorAll("input[data-pack-section]").forEach((inp) => {
+      if (!(inp instanceof HTMLInputElement) || !inp.checked) return;
+      const k = inp.dataset.packSection;
+      if (k && Object.prototype.hasOwnProperty.call(options, k)) options[k] = true;
+    });
+    return options;
+  }
+
+  async function runProfilePackImportPickFile() {
+    const nebula = window.nebula;
+    if (!nebula?.profilePackImportOpen) {
+      alert("Profile import is only available in the Nebula app.");
+      return;
+    }
+    const password = profilePackImportPassword?.value || "";
+    const r = await nebula.profilePackImportOpen({ password });
+    if (!r || r.canceled) return;
+    if (!r.ok) {
+      showProfilePackMsg(r.message || r.error || "Could not open file.", true);
+      return;
+    }
+    profilePackPendingImport = { pack: r.pack, available: r.available || {}, source: r.source || {} };
+    const srcName = r.source?.profileName || r.source?.profileId || "profile";
+    if (profilePackImportSourceHint) {
+      profilePackImportSourceHint.textContent = `From backup: ${srcName}. Choose what to import.`;
+    }
+    if (profilePackNewName) profilePackNewName.value = r.source?.profileName || "Imported";
+    buildProfilePackImportCheckboxes(r.available || {});
+    if (profilePackImportStepPick) profilePackImportStepPick.hidden = true;
+    if (profilePackImportStepApply) profilePackImportStepApply.hidden = false;
+    showProfilePackMsg("");
+  }
+
+  function applyRendererProfilePackSections(targetProfileId, sections, options) {
+    const pid = sanitizeProfileIdForSession(targetProfileId);
+    const active = sanitizeProfileIdForSession(appSettings.activeProfileId);
+    if (options.bookmarks && Array.isArray(sections.bookmarks)) {
+      const merged = mergeImportedBookmarksIntoArray(loadBookmarksArrayForProfile(pid), sections.bookmarks);
+      saveBookmarksArrayForProfile(pid, merged);
+      if (pid === active) {
+        bookmarks = merged;
+        renderBookmarksBar();
+        updateBookmarkStar();
+      }
+    }
+    if (options.history && Array.isArray(sections.history)) {
+      const merged = mergeHistoryArrays(loadHistoryArrayForProfile(pid), sections.history);
+      saveHistoryArrayForProfile(pid, merged);
+    }
+    if (options.aiChat) {
+      if (sections.aiConversations) {
+        const existing = (() => {
+          try {
+            const raw = localStorage.getItem(aiConversationsStorageKeyForProfile(pid));
+            return raw ? JSON.parse(raw) : { v: AI_CONVERSATIONS_STORE_VERSION, lastOpenedId: "", items: [] };
+          } catch {
+            return { v: AI_CONVERSATIONS_STORE_VERSION, lastOpenedId: "", items: [] };
+          }
+        })();
+        const merged = mergeAiConversationsStores(existing, sections.aiConversations);
+        localStorage.setItem(aiConversationsStorageKeyForProfile(pid), JSON.stringify(merged));
+        if (pid === active) saveAiConversationsStore(merged);
+      }
+      if (Array.isArray(sections.aiSearchHistory)) {
+        const merged = mergeAiSearchHistoryLists(
+          (() => {
+            try {
+              const raw = localStorage.getItem(aiSearchHistoryStorageKeyForProfile(pid));
+              const arr = raw ? JSON.parse(raw) : [];
+              return Array.isArray(arr) ? arr : [];
+            } catch {
+              return [];
+            }
+          })(),
+          sections.aiSearchHistory
+        );
+        localStorage.setItem(aiSearchHistoryStorageKeyForProfile(pid), JSON.stringify(merged));
+      }
+    }
+  }
+
+  function mergeImportedBookmarksIntoArray(existing, imported) {
+    const safe = (imported || []).filter((b) => {
+      if (!b || typeof b.url !== "string") return false;
+      try {
+        const u = new URL(b.url);
+        return u.protocol === "http:" || u.protocol === "https:";
+      } catch {
+        return false;
+      }
+    });
+    const seen = new Set((existing || []).map((b) => normalizeBookmarkUrl(b.url)));
+    const out = [...(existing || [])];
+    for (const b of safe) {
+      const key = normalizeBookmarkUrl(b.url);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({ url: b.url, title: b.title || shortHost(b.url) });
+    }
+    return out;
+  }
+
+  async function runProfilePackImportApply() {
+    if (!profilePackPendingImport?.pack) {
+      showProfilePackMsg("Choose a backup file first.", true);
+      return;
+    }
+    const nebula = window.nebula;
+    if (!nebula?.profilePackImportApply) {
+      alert("Profile import is only available in the Nebula app.");
+      return;
+    }
+    const options = readProfilePackImportOptionsFromForm();
+    if (!options.settings && !options.bookmarks && !options.history && !options.aiChat && !options.vault) {
+      showProfilePackMsg("Select at least one category to import.", true);
+      return;
+    }
+    const modeInp = document.querySelector('input[name="profile-pack-import-mode"]:checked');
+    const importMode =
+      modeInp instanceof HTMLInputElement && modeInp.value === "newProfile" ? "newProfile" : "merge";
+    const newProfileName =
+      importMode === "newProfile" && profilePackNewName ? profilePackNewName.value.trim() : "";
+    const r = await nebula.profilePackImportApply({
+      pack: profilePackPendingImport.pack,
+      options,
+      importMode,
+      newProfileName: newProfileName || profilePackPendingImport.source?.profileName || "Imported",
+      vaultMode: "merge",
+    });
+    if (!r?.ok) {
+      showProfilePackMsg(r?.error || "Import failed.", true);
+      return;
+    }
+    const sec = r.sectionsForRenderer || {};
+    applyRendererProfilePackSections(r.targetProfileId, sec, options);
+    if (r.results?.vault && !r.results.vault.ok) {
+      showProfilePackMsg(r.results.vault.error || "Vault import failed.", true);
+      return;
+    }
+    if (r.switchToNewProfile && typeof nebula.relaunchApp === "function") {
+      closeProfilePackPanel();
+      void nebula.relaunchApp();
+      return;
+    }
+    if (options.settings && nebula.getSettings) {
+      try {
+        appSettings = normalizeAppSettings(await nebula.getSettings());
+        applyShellAppearance();
+        syncChromeLayoutFromSettings();
+        populateSettingsForm();
+      } catch {
+        /* */
+      }
+    }
+    if (options.bookmarks) {
+      bookmarks = loadBookmarksFromStorage();
+      renderBookmarksBar();
+      updateBookmarkStar();
+    }
+    let msg = "Profile data imported.";
+    if (r.results?.vault?.added != null) {
+      msg += ` Vault: ${r.results.vault.added} added, ${r.results.vault.skipped} skipped.`;
+    }
+    showProfilePackMsg(msg, false);
+    profilePackPendingImport = null;
+    if (profilePackImportStepPick) profilePackImportStepPick.hidden = false;
+    if (profilePackImportStepApply) profilePackImportStepApply.hidden = true;
   }
 
   function mergeImportedBookmarks(imported) {
@@ -7760,6 +8211,20 @@
       void persistKeyboardShortcutsPatch(next, true);
     }
   });
+  settingsProfileExport?.addEventListener("click", () => openProfilePackPanel("export"));
+  settingsProfileImport?.addEventListener("click", () => openProfilePackPanel("import"));
+  profilePackClose?.addEventListener("click", () => closeProfilePackPanel());
+  profilePackBackdrop?.addEventListener("click", () => closeProfilePackPanel());
+  profilePackExportGo?.addEventListener("click", () => void runProfilePackExport());
+  profilePackImportPick?.addEventListener("click", () => void runProfilePackImportPickFile());
+  profilePackImportGo?.addEventListener("click", () => void runProfilePackImportApply());
+  document.querySelectorAll('input[name="profile-pack-import-mode"]').forEach((el) => {
+    el.addEventListener("change", () => {
+      const v = document.querySelector('input[name="profile-pack-import-mode"]:checked');
+      const isNew = v instanceof HTMLInputElement && v.value === "newProfile";
+      if (profilePackNewNameWrap) profilePackNewNameWrap.hidden = !isNew;
+    });
+  });
   settingsProfileAdd?.addEventListener("click", () => showProfileAddPanel());
   settingsProfileAddCancel?.addEventListener("click", () => hideProfileAddPanel());
   settingsProfileAddConfirm?.addEventListener("click", () => void commitNewProfileFromInput());
@@ -8595,9 +9060,11 @@
       const onImpChrome = () => void tryImport("chrome");
       const onImpEdge = () => void tryImport("edge");
       const onImpFx = () => void tryImport("firefox");
+      const onImpProfile = () => openProfilePackPanel("import");
       firstRunImportChrome?.addEventListener("click", onImpChrome);
       firstRunImportEdge?.addEventListener("click", onImpEdge);
       firstRunImportFirefox?.addEventListener("click", onImpFx);
+      firstRunImportProfile?.addEventListener("click", onImpProfile);
       const s2 = await waitFirstRunChoice([
         { el: firstRunStep2Next, value: "next" },
         { el: firstRunStep2Skip, value: "next" },
@@ -8606,6 +9073,7 @@
       firstRunImportChrome?.removeEventListener("click", onImpChrome);
       firstRunImportEdge?.removeEventListener("click", onImpEdge);
       firstRunImportFirefox?.removeEventListener("click", onImpFx);
+      firstRunImportProfile?.removeEventListener("click", onImpProfile);
       if (s2 === "back" || s2 === undefined) continue;
 
       showStep(3);

@@ -21,6 +21,7 @@ const { pipeline } = require("stream/promises");
 const { Readable } = require("stream");
 const nebulaAdblock = require("./adblock");
 const nebulaShortcuts = require("./lib/keyboard-shortcuts");
+const nebulaProfilePack = require("./lib/profile-pack");
 
 /** guest `webContents.id` → `<webview partition=…>` string (OAuth popups + window.open must match). */
 const guestPartitionByWcId = new Map();
@@ -4640,6 +4641,261 @@ ipcMain.handle("nebula-vault-copy-username", (_e, payload) => {
   if (!ent || typeof ent.username !== "string") return { ok: false };
   clipboard.writeText(ent.username);
   return { ok: true };
+});
+
+/** —— Profile pack export / import (encrypted backup; BYOS-ready format) */
+
+const PROFILE_PACK_MIN_PASSWORD = 8;
+
+function verifyProfilePackPassword(password, requireAccount) {
+  if (typeof password !== "string" || password.length < PROFILE_PACK_MIN_PASSWORD) {
+    return { ok: false, error: "password_too_short" };
+  }
+  if (hasNebulaLocalAccount()) {
+    if (!verifyNebulaAccountPassword(password)) return { ok: false, error: "wrong_password" };
+    return { ok: true };
+  }
+  if (requireAccount) return { ok: false, error: "account_required" };
+  return { ok: true, exportPassphraseOnly: true };
+}
+
+function mergeVaultEntriesFromPack(incoming, mode) {
+  const now = Date.now();
+  if (!Array.isArray(incoming)) return { ok: false, error: "no_vault_entries" };
+  if (incoming.length > 5000) return { ok: false, error: "too_many_vault_entries" };
+  if (mode === "replace") {
+    const fresh = [];
+    let skipped = 0;
+    for (const raw of incoming) {
+      const neu = safeImportedVaultEntry(raw, now);
+      if (!neu) {
+        skipped += 1;
+        continue;
+      }
+      fresh.push(neu);
+    }
+    saveVaultEntries(fresh);
+    return { ok: true, mode: "replace", added: fresh.length, skipped, total: fresh.length };
+  }
+  const existing = loadVaultEntries();
+  let added = 0;
+  let skipped = 0;
+  for (const raw of incoming) {
+    const neu = safeImportedVaultEntry(raw, now);
+    if (!neu) {
+      skipped += 1;
+      continue;
+    }
+    const dup = existing.some(
+      (e) => e && e.origin === neu.origin && (e.username || "") === (neu.username || "")
+    );
+    if (dup) {
+      skipped += 1;
+      continue;
+    }
+    existing.unshift(neu);
+    added += 1;
+  }
+  saveVaultEntries(existing);
+  return { ok: true, mode: "merge", added, skipped, total: existing.length };
+}
+
+function makeUniqueProfileId(baseName, profiles) {
+  let id = sanitizeProfileId(
+    String(baseName || "imported")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+  );
+  if (!id || id === "default") id = "imported";
+  const list = Array.isArray(profiles) ? profiles : [];
+  if (!list.some((p) => p && p.id === id)) return id;
+  let n = 2;
+  while (list.some((p) => p && p.id === `${id}-${n}`)) n += 1;
+  return `${id}-${n}`.slice(0, 48);
+}
+
+ipcMain.handle("nebula-profile-pack-export", async (event, payload) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  const password = typeof payload?.password === "string" ? payload.password : "";
+  const options = payload?.options && typeof payload.options === "object" ? payload.options : {};
+  const includeVault = options.vault === true;
+  const auth = verifyProfilePackPassword(password, includeVault);
+  if (!auth.ok) {
+    const errMsg =
+      auth.error === "account_required"
+        ? "Create a local Nebula account (Settings → Privacy) before exporting logins and API keys."
+        : auth.error === "wrong_password"
+          ? "Incorrect Nebula account password."
+          : `Password must be at least ${PROFILE_PACK_MIN_PASSWORD} characters.`;
+    return { ok: false, error: auth.error, message: errMsg };
+  }
+  const profileId = sanitizeProfileId(payload?.profileId || loadSettings().activeProfileId);
+  const profileName =
+    typeof payload?.profileName === "string" && payload.profileName.trim()
+      ? payload.profileName.trim().slice(0, 64)
+      : profileId;
+  const rendererSections =
+    payload?.rendererSections && typeof payload.rendererSections === "object" ? payload.rendererSections : {};
+  const settingsSlice = options.settings ? nebulaProfilePack.extractExportableSettings(loadSettings()) : null;
+  let vaultEntries = null;
+  if (includeVault) {
+    vaultEntries = loadVaultEntries();
+  }
+  const inner = nebulaProfilePack.buildInnerPack({
+    profileMeta: {
+      profileId,
+      profileName,
+      nebulaVersion: typeof NEBULA_PKG.version === "string" ? NEBULA_PKG.version : "",
+    },
+    options: {
+      settings: !!options.settings,
+      bookmarks: !!options.bookmarks,
+      history: !!options.history,
+      aiChat: !!options.aiChat,
+      vault: includeVault,
+    },
+    settingsSlice,
+    vaultEntries,
+    rendererSections,
+  });
+  const envelope = nebulaProfilePack.encryptPackInner(inner, password);
+  const text = JSON.stringify(envelope, null, 2);
+  const safeName = profileName.replace(/[^a-zA-Z0-9._-]+/g, "-").slice(0, 40) || "profile";
+  const result = await dialog.showSaveDialog(win || undefined, {
+    title: "Export Nebula profile",
+    defaultPath: `nebula-profile-${safeName}.nebula-profile`,
+    filters: [
+      { name: "Nebula profile", extensions: ["nebula-profile", "json"] },
+      { name: "All files", extensions: ["*"] },
+    ],
+  });
+  if (result.canceled || !result.filePath) return { ok: false, canceled: true };
+  try {
+    fs.writeFileSync(result.filePath, text, "utf8");
+    return { ok: true, path: result.filePath };
+  } catch (err) {
+    return { ok: false, error: String(err?.message || err) };
+  }
+});
+
+ipcMain.handle("nebula-profile-pack-import-open", async (event, payload) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  const password = typeof payload?.password === "string" ? payload.password : "";
+  const auth = verifyProfilePackPassword(password, false);
+  if (!auth.ok) {
+    const errMsg =
+      auth.error === "wrong_password"
+        ? "Incorrect Nebula account password."
+        : `Password must be at least ${PROFILE_PACK_MIN_PASSWORD} characters.`;
+    return { ok: false, error: auth.error, message: errMsg };
+  }
+  const result = await dialog.showOpenDialog(win || undefined, {
+    title: "Import Nebula profile",
+    properties: ["openFile"],
+    filters: [
+      { name: "Nebula profile", extensions: ["nebula-profile", "json"] },
+      { name: "All files", extensions: ["*"] },
+    ],
+  });
+  if (result.canceled || !result.filePaths?.length) return { ok: false, canceled: true };
+  let parsed;
+  try {
+    parsed = nebulaProfilePack.parsePackFileText(fs.readFileSync(result.filePaths[0], "utf8"));
+  } catch (err) {
+    return { ok: false, error: String(err?.message || err) };
+  }
+  if (!parsed.ok) return { ok: false, error: parsed.error || "invalid_pack" };
+  let pack;
+  if (parsed.pack) {
+    return { ok: false, error: "unencrypted_pack_not_supported", message: "This backup is not encrypted. Re-export from a current Nebula version." };
+  }
+  const dec = nebulaProfilePack.decryptPackEnvelope(parsed.envelope, password);
+  if (!dec.ok) {
+    return {
+      ok: false,
+      error: dec.error,
+      message: "Could not decrypt. Check the password or file.",
+    };
+  }
+  pack = dec.pack;
+  const sections = pack.sections && typeof pack.sections === "object" ? pack.sections : {};
+  const available = {
+    settings: !!sections.settings,
+    bookmarks: Array.isArray(sections.bookmarks),
+    history: Array.isArray(sections.history),
+    aiChat: !!(sections.aiConversations || sections.aiSearchHistory),
+    vault: !!(sections.vault && Array.isArray(sections.vault.entries)),
+  };
+  return {
+    ok: true,
+    path: result.filePaths[0],
+    pack,
+    source: pack.source || {},
+    available,
+  };
+});
+
+ipcMain.handle("nebula-profile-pack-import-apply", async (_e, payload) => {
+  const pack = payload?.pack;
+  if (!pack || pack.format !== nebulaProfilePack.PACK_FORMAT) return { ok: false, error: "invalid_pack" };
+  const options = payload?.options && typeof payload.options === "object" ? payload.options : {};
+  const importMode = payload?.importMode === "newProfile" ? "newProfile" : "merge";
+  const sections = pack.sections && typeof pack.sections === "object" ? pack.sections : {};
+  const cur = loadSettings();
+  const results = { settings: null, vault: null, newProfile: null };
+
+  let targetProfileId = sanitizeProfileId(cur.activeProfileId);
+  let profiles = normalizeProfilesList(cur.profiles);
+  let switchToNewProfile = false;
+
+  if (importMode === "newProfile") {
+    const baseName =
+      typeof payload?.newProfileName === "string" && payload.newProfileName.trim()
+        ? payload.newProfileName.trim().slice(0, 64)
+        : (pack.source && pack.source.profileName) || "Imported";
+    const newId = makeUniqueProfileId(baseName, profiles);
+    profiles = [...profiles, { id: newId, name: baseName }];
+    targetProfileId = newId;
+    switchToNewProfile = true;
+    results.newProfile = { id: newId, name: baseName };
+  }
+
+  if (options.settings && sections.settings) {
+    const merged = nebulaProfilePack.mergeExportableSettingsInto(cur, sections.settings);
+    const patch = {};
+    for (const key of nebulaProfilePack.EXPORTABLE_SETTINGS_KEYS) {
+      if (Object.prototype.hasOwnProperty.call(merged, key)) patch[key] = merged[key];
+    }
+    let next = normalizeSettings({ ...cur, ...patch });
+    if (switchToNewProfile) {
+      next = normalizeSettings({ ...next, profiles, activeProfileId: targetProfileId });
+    }
+    saveSettings(next);
+    results.settings = { ok: true, keys: Object.keys(patch) };
+  } else if (switchToNewProfile) {
+    const next = normalizeSettings({ ...cur, profiles, activeProfileId: targetProfileId });
+    saveSettings(next);
+  }
+
+  if (options.vault && sections.vault && Array.isArray(sections.vault.entries)) {
+    const vaultMode = payload?.vaultMode === "replace" ? "replace" : "merge";
+    results.vault = mergeVaultEntriesFromPack(sections.vault.entries, vaultMode);
+  }
+
+  return {
+    ok: true,
+    targetProfileId,
+    switchToNewProfile,
+    profiles: switchToNewProfile ? profiles : undefined,
+    results,
+    sectionsForRenderer: {
+      bookmarks: options.bookmarks && Array.isArray(sections.bookmarks) ? sections.bookmarks : null,
+      history: options.history && Array.isArray(sections.history) ? sections.history : null,
+      aiConversations: options.aiChat && sections.aiConversations ? sections.aiConversations : null,
+      aiSearchHistory: options.aiChat && Array.isArray(sections.aiSearchHistory) ? sections.aiSearchHistory : null,
+    },
+  };
 });
 
 /** —— Permission prompts (camera / mic / location ask) */

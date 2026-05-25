@@ -1,6 +1,13 @@
 {
   "entries": [
     {
+      "version": "1.2.1",
+      "date": "2026-05-25",
+      "added": [
+        "Profile backup: export and import an encrypted profile pack (.nebula-profile) from Settings → Profiles — settings, bookmarks, history, AI chats, and vault (optional checkboxes). Merge into the current profile or add as a new profile. First-run setup can import a pack from another PC."
+      ]
+    },
+    {
       "version": "1.2.0",
       "date": "2026-05-24",
       "added": [

@@ -148,6 +148,10 @@ contextBridge.exposeInMainWorld("nebula", {
   vaultExportJsonFile: (payload) => ipcRenderer.invoke("nebula-vault-export-json-file", payload ?? {}),
   /** Merge or replace from JSON file. Pass `{ mode: "replace" }` to replace the whole vault (destructive). */
   vaultImportJsonMerge: (payload) => ipcRenderer.invoke("nebula-vault-import-json-merge", payload ?? {}),
+  /** Encrypted profile pack (.nebula-profile). */
+  profilePackExport: (payload) => ipcRenderer.invoke("nebula-profile-pack-export", payload ?? {}),
+  profilePackImportOpen: (payload) => ipcRenderer.invoke("nebula-profile-pack-import-open", payload ?? {}),
+  profilePackImportApply: (payload) => ipcRenderer.invoke("nebula-profile-pack-import-apply", payload ?? {}),
   registerGuestWindowOpen: (payload) => ipcRenderer.invoke("nebula-register-guest-window-open", payload ?? {}),
   /**
    * Picture-in-picture for the active tab guest page (see main process).
