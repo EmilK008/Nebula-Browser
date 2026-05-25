@@ -4063,6 +4063,31 @@ function saveNebulaAccountPasswordHash(password) {
   return true;
 }
 
+/** Update username only; keeps existing salt/hash (accountId unchanged). */
+function updateNebulaAccountUsername(newUsername) {
+  const rec = loadNebulaAccountRecord();
+  if (!rec || !rec.username) return { ok: false, error: "needs_username" };
+  try {
+    const p = nebulaAccountStorePath();
+    const o = JSON.parse(fs.readFileSync(p, "utf8"));
+    if (!o || typeof o !== "object" || typeof o.salt !== "string" || typeof o.hash !== "string") {
+      return { ok: false, error: "corrupt" };
+    }
+    fs.writeFileSync(
+      p,
+      JSON.stringify({
+        ...o,
+        v: nebulaAccountLib.NEBULA_ACCOUNT_RECORD_VERSION,
+        accountId: rec.accountId,
+        username: newUsername,
+      })
+    );
+    return { ok: true };
+  } catch {
+    return { ok: false, error: "io" };
+  }
+}
+
 function deleteNebulaAccountFile() {
   try {
     fs.unlinkSync(nebulaAccountStorePath());
@@ -4146,6 +4171,27 @@ ipcMain.handle("nebula-account-change", (_e, payload) => {
   if (!saveNebulaAccountPasswordHash(next)) return { ok: false, error: "needs_username" };
   setNebulaAccountUnlockSession();
   return { ok: true };
+});
+
+ipcMain.handle("nebula-account-change-username", (_e, payload) => {
+  const pwd = typeof payload?.currentPassword === "string" ? payload.currentPassword : "";
+  const userIn = typeof payload?.newUsername === "string" ? payload.newUsername : "";
+  const rec = loadNebulaAccountRecord();
+  if (!rec) return { ok: false, error: "none" };
+  if (!rec.username || rec.needsUsernameMigration) {
+    return { ok: false, error: "needs_username", message: "Set a username first (migration above)." };
+  }
+  if (!verifyNebulaAccountPassword(pwd)) return { ok: false, error: "bad_password" };
+  const uv = nebulaAccountLib.validateUsername(userIn);
+  if (!uv.ok) {
+    return { ok: false, error: uv.error, message: nebulaAccountLib.usernameErrorMessage(uv.error) };
+  }
+  if (uv.username === rec.username) {
+    return { ok: false, error: "username_unchanged", message: "That is already your username." };
+  }
+  const upd = updateNebulaAccountUsername(uv.username);
+  if (!upd.ok) return { ok: false, error: upd.error || "io" };
+  return { ok: true, username: uv.username, accountId: rec.accountId };
 });
 
 ipcMain.handle("nebula-account-remove", (_e, payload) => {

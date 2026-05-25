@@ -477,6 +477,8 @@
   const nebulaAccountConfirmPass = document.getElementById("nebula-account-confirm-pass");
   const nebulaAccountCreateBtn = document.getElementById("nebula-account-create-btn");
   const nebulaAccountCurrentPass = document.getElementById("nebula-account-current-pass");
+  const nebulaAccountChangeUser = document.getElementById("nebula-account-change-user");
+  const nebulaAccountChangeUserBtn = document.getElementById("nebula-account-change-user-btn");
   const nebulaAccountChangeNewPass = document.getElementById("nebula-account-change-new-pass");
   const nebulaAccountChangeBtn = document.getElementById("nebula-account-change-btn");
   const nebulaAccountRemoveBtn = document.getElementById("nebula-account-remove-btn");
@@ -3431,6 +3433,10 @@
           nebulaAccountSignedInAs.textContent = "";
           nebulaAccountSignedInAs.hidden = true;
         }
+      }
+      if (nebulaAccountChangeUser) {
+        nebulaAccountChangeUser.placeholder =
+          has && st.username && !needsMigrate ? `Current: ${st.username}` : "New username";
       }
     } catch {
       if (nebulaAccountMigrateBlock) nebulaAccountMigrateBlock.hidden = true;
@@ -8628,6 +8634,40 @@
       setNebulaAccountSettingsMessage("Could not create account.");
     } catch {
       setNebulaAccountSettingsMessage("Could not create account.");
+    }
+  });
+
+  nebulaAccountChangeUserBtn?.addEventListener("click", async () => {
+    const cur = nebulaAccountCurrentPass?.value ?? "";
+    const newUser = nebulaAccountChangeUser?.value ?? "";
+    setNebulaAccountSettingsMessage("");
+    if (!cur) {
+      setNebulaAccountSettingsMessage("Enter your current password to change username.");
+      return;
+    }
+    try {
+      const r = await window.nebula?.accountChangeUsername?.({
+        currentPassword: cur,
+        newUsername: newUser,
+      });
+      if (r?.ok) {
+        if (nebulaAccountChangeUser) nebulaAccountChangeUser.value = "";
+        setNebulaAccountSettingsMessage(`Username updated to @${r.username || newUser}.`);
+        await refreshNebulaAccountSettingsUI();
+        await loadVaultEntriesFromMain();
+        return;
+      }
+      if (r?.error === "bad_password") {
+        setNebulaAccountSettingsMessage("Current password is wrong.");
+        return;
+      }
+      if (r?.message) {
+        setNebulaAccountSettingsMessage(r.message);
+        return;
+      }
+      setNebulaAccountSettingsMessage("Could not change username.");
+    } catch {
+      setNebulaAccountSettingsMessage("Could not change username.");
     }
   });
 

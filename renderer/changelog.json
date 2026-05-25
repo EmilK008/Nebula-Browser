@@ -1,6 +1,13 @@
 {
   "entries": [
     {
+      "version": "1.2.3",
+      "date": "2026-05-25",
+      "added": [
+        "Change your local Nebula username in Settings → Privacy (current password required). Your account id stays the same for backups and future sync."
+      ]
+    },
+    {
       "version": "1.2.2",
       "date": "2026-05-25",
       "added": [

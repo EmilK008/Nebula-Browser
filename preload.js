@@ -110,6 +110,7 @@ contextBridge.exposeInMainWorld("nebula", {
   accountCreate: (payload) => ipcRenderer.invoke("nebula-account-create", payload),
   accountSetUsername: (payload) => ipcRenderer.invoke("nebula-account-set-username", payload),
   accountChange: (payload) => ipcRenderer.invoke("nebula-account-change", payload),
+  accountChangeUsername: (payload) => ipcRenderer.invoke("nebula-account-change-username", payload),
   accountRemove: (payload) => ipcRenderer.invoke("nebula-account-remove", payload),
   accountUnlock: (payload) => ipcRenderer.invoke("nebula-account-unlock", payload),
   accountLock: () => ipcRenderer.invoke("nebula-account-lock"),
