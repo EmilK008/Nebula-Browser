@@ -6,6 +6,9 @@
     return `nebula-bookmarks-v2-${sanitizeProfileIdForSession(appSettings.activeProfileId)}`;
   }
   const HISTORY_LEGACY_V1 = "nebula-history-v1";
+  const STARTUP_SPLASH_MIN_MS = 1400;
+  const STARTUP_SPLASH_MAX_MS = 4500;
+  const STARTUP_SPLASH_FADE_MS = 400;
 
   function historyStorageKey() {
     return `nebula-history-v2-${sanitizeProfileIdForSession(appSettings.activeProfileId)}`;
@@ -360,6 +363,7 @@
   const firstRunAccountPass = document.getElementById("first-run-account-pass");
   const firstRunAccountPass2 = document.getElementById("first-run-account-pass2");
   const firstRunAccountCreate = document.getElementById("first-run-account-create");
+  const startupSplash = document.getElementById("startup-splash");
   const sitePermPanel = document.getElementById("site-perm-panel");
   const sitePermBackdrop = document.getElementById("site-perm-backdrop");
   const sitePermClose = document.getElementById("site-perm-close");
@@ -623,6 +627,7 @@
     defaultSearchEngine: "duckduckgo",
     keyboardShortcuts: {},
     vaultKeepUnlockedUntilQuit: false,
+    showStartupAnimation: true,
   };
 
   /** Official download pages only; `fixedProxyRules` only if accurate (otherwise Nebula uses system proxy when routing is on). */
@@ -968,6 +973,7 @@
           ? { ...o.keyboardShortcuts }
           : {},
       vaultKeepUnlockedUntilQuit: o.vaultKeepUnlockedUntilQuit === true,
+      showStartupAnimation: o.showStartupAnimation !== false,
     };
     const ss = merged.searchSuggestions;
     const layers = ["past", "local", "remote"];
@@ -2720,6 +2726,66 @@
     scheduleSaveSessionSnapshot();
   }
 
+  function shouldShowStartupSplash() {
+    if (appSettings.showStartupAnimation === false) return false;
+    try {
+      return !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    } catch {
+      return true;
+    }
+  }
+
+  function dismissStartupSplashImmediate() {
+    document.body.classList.remove("startup-splash-active");
+    document.body.classList.add("startup-splash-done");
+    if (startupSplash) {
+      startupSplash.classList.remove("startup-splash--exiting");
+      startupSplash.hidden = true;
+      startupSplash.setAttribute("aria-hidden", "true");
+    }
+  }
+
+  function waitStartupSplashFadeOut() {
+    return new Promise((resolve) => {
+      if (!startupSplash) {
+        resolve();
+        return;
+      }
+      let settled = false;
+      const done = () => {
+        if (settled) return;
+        settled = true;
+        resolve();
+      };
+      const onEnd = (e) => {
+        if (e.target === startupSplash) done();
+      };
+      startupSplash.addEventListener("transitionend", onEnd);
+      setTimeout(done, STARTUP_SPLASH_FADE_MS + 120);
+    });
+  }
+
+  async function runStartupSplash() {
+    if (!startupSplash || !shouldShowStartupSplash()) {
+      dismissStartupSplashImmediate();
+      return;
+    }
+    document.body.classList.add("startup-splash-active");
+    document.body.classList.remove("startup-splash-done");
+    startupSplash.hidden = false;
+    startupSplash.classList.remove("startup-splash--exiting");
+    startupSplash.setAttribute("aria-hidden", "false");
+
+    await Promise.race([
+      new Promise((r) => setTimeout(r, STARTUP_SPLASH_MIN_MS)),
+      new Promise((r) => setTimeout(r, STARTUP_SPLASH_MAX_MS)),
+    ]);
+
+    startupSplash.classList.add("startup-splash--exiting");
+    await waitStartupSplashFadeOut();
+    dismissStartupSplashImmediate();
+  }
+
   function tryOfferSessionRestoreOnLaunch() {
     const saved = loadSavedSession();
     if (shouldOfferSessionRestore(saved)) {
@@ -4325,6 +4391,7 @@
     chk("settings-tb-ai", tbb.ai !== false);
     chk("settings-tb-zoom-reset", tbb.zoomReset !== false);
     chk("settings-vault-keep-unlocked", s.vaultKeepUnlockedUntilQuit === true);
+    chk("settings-show-startup-animation", s.showStartupAnimation !== false);
     const dse = document.getElementById("settings-default-search-engine");
     if (dse) dse.value = getDefaultSearchEngine();
     renderSettingsShortcutsTable();
@@ -4480,6 +4547,7 @@
         return window.NebulaSearchProviders?.normalizeEngineId(raw) || "duckduckgo";
       })(),
       vaultKeepUnlockedUntilQuit: chk("settings-vault-keep-unlocked"),
+      showStartupAnimation: chk("settings-show-startup-animation"),
     };
   }
 
@@ -8617,6 +8685,7 @@
   void loadAppSettings().then(async () => {
     bookmarks = loadBookmarksFromStorage();
     renderBookmarksBar();
+    await runStartupSplash();
     if (appSettings.firstRunOnboardingDone === false) {
       await runFirstRunOnboardingFlow();
     }

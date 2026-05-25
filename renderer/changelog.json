@@ -6,7 +6,8 @@
       "added": [
         "Customizable keyboard shortcuts in Settings: change any action, reset per row or all at once, with conflict warnings. Menu accelerators update without restart.",
         "Default search engine setting: DuckDuckGo, Google, Bing, or AI search. Omnibox uses the same suggestion layers (past searches, bookmarks/history, live completions) with provider-specific completion sources.",
-        "AI search from the address bar: opens the AI assistant, runs a web-search-backed answer using your configured provider, model, and vault API keys (Brave Search for web results)."
+        "AI search from the address bar: opens the AI assistant, runs a web-search-backed answer using your configured provider, model, and vault API keys (Brave Search for web results).",
+        "Startup splash animation on launch (cosmic orb, accent-colored). Toggle in Settings → Appearance. Respects reduced motion; skips when disabled."
       ]
     },
     {

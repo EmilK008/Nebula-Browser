@@ -10,7 +10,28 @@
     <title>Nebula</title>
     <link rel="stylesheet" href="styles.css" />
   </head>
-  <body>
+  <body class="startup-splash-active">
+    <div id="startup-splash" class="startup-splash" aria-hidden="false" role="presentation">
+      <div class="startup-splash-inner">
+        <div class="startup-splash-visual" aria-hidden="true">
+          <div class="startup-splash-glow"></div>
+          <div class="startup-splash-ring startup-splash-ring--outer"></div>
+          <div class="startup-splash-ring startup-splash-ring--mid"></div>
+          <div class="startup-splash-ring startup-splash-ring--inner"></div>
+          <div class="startup-splash-core">
+            <svg class="startup-splash-icon" viewBox="0 0 24 24" width="36" height="36" aria-hidden="true">
+              <path
+                fill="currentColor"
+                d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"
+              />
+            </svg>
+          </div>
+          <div class="startup-splash-sweep"></div>
+          <div class="startup-splash-orbit"><span></span><span></span><span></span></div>
+        </div>
+        <p class="startup-splash-title">Nebula</p>
+      </div>
+    </div>
     <header class="chrome" id="drag-region">
       <div id="update-banner" class="update-banner" hidden role="status">
         <span id="update-banner-text" class="update-banner-text"></span>
@@ -781,7 +802,7 @@
                 Some streaming or video sites expect ads or anti-adblock scripts. If playback fails, turn this off in Settings while you watch, then turn it back on.
               </p>
             </section>
-            <section class="settings-section" data-settings-category="Appearance &amp; reading" data-settings-keywords="appearance,theme,dark,light,accent,density,reading,chrome,ui">
+            <section class="settings-section" data-settings-category="Appearance &amp; reading" data-settings-keywords="appearance,theme,dark,light,accent,density,reading,chrome,ui,startup,splash,animation">
               <h3 class="settings-section-title">Appearance &amp; reading</h3>
               <label class="settings-field">
                 <span class="settings-label">Window chrome theme</span>
@@ -803,6 +824,10 @@
                 </select>
               </label>
               <p class="settings-hint">Theme and accent apply to Nebula’s own UI (not website content). “Match system” follows your OS light/dark preference.</p>
+              <label class="settings-checkbox-row">
+                <input type="checkbox" id="settings-show-startup-animation" />
+                <span>Show startup animation</span>
+              </label>
               <label class="settings-checkbox-row">
                 <input type="checkbox" id="settings-force-dark-mode" />
                 <span>Force dark mode for website content (Chromium auto-dark; restart Nebula after changing)</span>

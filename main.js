@@ -1556,6 +1556,8 @@ const DEFAULT_SETTINGS = {
   keyboardShortcuts: {},
   /** When true, a successful vault unlock lasts until Nebula quits (or you lock manually). */
   vaultKeepUnlockedUntilQuit: false,
+  /** Full-screen orb splash on cold launch (renderer). */
+  showStartupAnimation: true,
 };
 
 /** Allowlisted ids for `nebula-vpn-helper-open-app` (must match renderer catalog). */
@@ -1681,6 +1683,9 @@ function normalizeSettings(s) {
     if (typeof o.vaultKeepUnlockedUntilQuit !== "boolean") {
       o.vaultKeepUnlockedUntilQuit = DEFAULT_SETTINGS.vaultKeepUnlockedUntilQuit;
     }
+    if (typeof o.showStartupAnimation !== "boolean") {
+      o.showStartupAnimation = DEFAULT_SETTINGS.showStartupAnimation;
+    }
     return o;
   }
   const layers = ["past", "local", "remote"];
@@ -1721,6 +1726,9 @@ function normalizeSettings(s) {
   o.keyboardShortcuts = nebulaShortcuts.normalizeShortcutOverrides(o.keyboardShortcuts);
   if (typeof o.vaultKeepUnlockedUntilQuit !== "boolean") {
     o.vaultKeepUnlockedUntilQuit = DEFAULT_SETTINGS.vaultKeepUnlockedUntilQuit;
+  }
+  if (typeof o.showStartupAnimation !== "boolean") {
+    o.showStartupAnimation = DEFAULT_SETTINGS.showStartupAnimation;
   }
   return o;
 }
