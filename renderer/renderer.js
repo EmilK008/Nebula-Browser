@@ -15,6 +15,27 @@
   }
   const SESSION_RESTORE_V1 = "nebula-session-restore-v1";
 
+  function normalizeProfileFolderSync(raw, activeProfileId) {
+    const pid = sanitizeProfileIdForSession(activeProfileId || "default");
+    const def = {
+      enabled: false,
+      profileId: pid,
+      folderPath: "",
+      lastPushedExportedAt: 0,
+      lastImportedExportedAt: 0,
+      pendingPush: false,
+    };
+    if (!raw || typeof raw !== "object") return def;
+    return {
+      enabled: raw.enabled === true,
+      profileId: sanitizeProfileIdForSession(raw.profileId || pid),
+      folderPath: typeof raw.folderPath === "string" ? raw.folderPath.trim() : "",
+      lastPushedExportedAt: Number(raw.lastPushedExportedAt) || 0,
+      lastImportedExportedAt: Number(raw.lastImportedExportedAt) || 0,
+      pendingPush: raw.pendingPush === true,
+    };
+  }
+
   function sanitizeProfileIdForSession(raw) {
     let s = typeof raw === "string" ? raw.trim().toLowerCase() : "";
     if (!s || s === "default") return "default";
@@ -382,6 +403,24 @@
   const settingsProfileAddCancel = document.getElementById("settings-profile-add-cancel");
   const settingsProfileExport = document.getElementById("settings-profile-export");
   const settingsProfileImport = document.getElementById("settings-profile-import");
+  const settingsFolderSyncEnabled = document.getElementById("settings-folder-sync-enabled");
+  const settingsFolderSyncEnableLabel = document.getElementById("settings-folder-sync-enable-label");
+  const settingsFolderSyncProfileHint = document.getElementById("settings-folder-sync-profile-hint");
+  const settingsFolderSyncPath = document.getElementById("settings-folder-sync-path");
+  const settingsFolderSyncChoose = document.getElementById("settings-folder-sync-choose");
+  const settingsFolderSyncOpen = document.getElementById("settings-folder-sync-open");
+  const settingsFolderSyncNow = document.getElementById("settings-folder-sync-now");
+  const settingsFolderSyncStatus = document.getElementById("settings-folder-sync-status");
+  const folderSyncPasswordPanel = document.getElementById("folder-sync-password-panel");
+  const folderSyncPasswordBackdrop = document.getElementById("folder-sync-password-backdrop");
+  const folderSyncPasswordClose = document.getElementById("folder-sync-password-close");
+  const folderSyncPasswordMsg = document.getElementById("folder-sync-password-msg");
+  const folderSyncPasswordInput = document.getElementById("folder-sync-password-input");
+  const folderSyncPasswordError = document.getElementById("folder-sync-password-error");
+  const folderSyncPasswordOk = document.getElementById("folder-sync-password-ok");
+  let folderSyncSessionPassword = "";
+  /** @type {ReturnType<typeof setTimeout> | null} */
+  let folderSyncPushDebounceId = null;
   const profilePackPanel = document.getElementById("profile-pack-panel");
   const profilePackBackdrop = document.getElementById("profile-pack-backdrop");
   const profilePackClose = document.getElementById("profile-pack-close");
@@ -661,6 +700,14 @@
     keyboardShortcuts: {},
     vaultKeepUnlockedUntilQuit: false,
     showStartupAnimation: true,
+    profileFolderSync: {
+      enabled: false,
+      profileId: "default",
+      folderPath: "",
+      lastPushedExportedAt: 0,
+      lastImportedExportedAt: 0,
+      pendingPush: false,
+    },
   };
 
   /** Official download pages only; `fixedProxyRules` only if accurate (otherwise Nebula uses system proxy when routing is on). */
@@ -1007,6 +1054,7 @@
           : {},
       vaultKeepUnlockedUntilQuit: o.vaultKeepUnlockedUntilQuit === true,
       showStartupAnimation: o.showStartupAnimation !== false,
+      profileFolderSync: normalizeProfileFolderSync(o.profileFolderSync, activeProfileId),
     };
     const ss = merged.searchSuggestions;
     const layers = ["past", "local", "remote"];
@@ -1192,6 +1240,7 @@
   function saveAiConversationsStore(store) {
     try {
       localStorage.setItem(aiConversationsStorageKey(), JSON.stringify(store));
+      void markFolderSyncPending();
     } catch {
       /* quota or private mode */
     }
@@ -3761,6 +3810,7 @@
 
   function saveHistoryToStorage(entries) {
     localStorage.setItem(historyStorageKey(), JSON.stringify(entries.slice(0, HISTORY_MAX)));
+    void markFolderSyncPending();
   }
 
   function removeHistoryEntry(url, visitedAt) {
@@ -4457,6 +4507,7 @@
     chk("settings-tb-zoom-reset", tbb.zoomReset !== false);
     chk("settings-vault-keep-unlocked", s.vaultKeepUnlockedUntilQuit === true);
     chk("settings-show-startup-animation", s.showStartupAnimation !== false);
+    refreshFolderSyncSettingsUI();
     const dse = document.getElementById("settings-default-search-engine");
     if (dse) dse.value = getDefaultSearchEngine();
     renderSettingsShortcutsTable();
@@ -4737,6 +4788,7 @@
       syncAiProviderAndModelFromSettings();
       void refreshAiDrawerHint();
     }
+    void markFolderSyncPending();
     closeSettingsPanel();
     refreshOmniboxSuggestions();
     void refreshTranslationKeyStatus();
@@ -4927,6 +4979,7 @@
 
   function saveBookmarksToStorage() {
     localStorage.setItem(bookmarksStorageKey(), JSON.stringify(bookmarks));
+    void markFolderSyncPending();
   }
 
   function normalizeBookmarkUrl(url) {
@@ -5500,6 +5553,313 @@
     profilePackPendingImport = null;
     if (profilePackImportStepPick) profilePackImportStepPick.hidden = false;
     if (profilePackImportStepApply) profilePackImportStepApply.hidden = true;
+  }
+
+  function getActiveProfileFolderSync() {
+    return normalizeProfileFolderSync(appSettings.profileFolderSync, appSettings.activeProfileId);
+  }
+
+  function isFolderSyncActiveForCurrentProfile() {
+    const fs = getActiveProfileFolderSync();
+    const pid = sanitizeProfileIdForSession(appSettings.activeProfileId || "default");
+    return fs.enabled && fs.folderPath && fs.profileId === pid;
+  }
+
+  function setFolderSyncStatus(text, isError) {
+    if (!settingsFolderSyncStatus) return;
+    settingsFolderSyncStatus.textContent = text || "";
+    settingsFolderSyncStatus.style.color = isError ? "var(--danger, #e85d5d)" : "";
+  }
+
+  function refreshFolderSyncSettingsUI() {
+    const fs = getActiveProfileFolderSync();
+    const pid = sanitizeProfileIdForSession(appSettings.activeProfileId || "default");
+    const prof = (appSettings.profiles || []).find((p) => p && p.id === pid);
+    const profLabel = prof?.name || pid;
+    if (settingsFolderSyncPath) settingsFolderSyncPath.value = fs.folderPath || "";
+    if (settingsFolderSyncOpen) settingsFolderSyncOpen.hidden = !fs.folderPath;
+    if (settingsFolderSyncEnabled) {
+      settingsFolderSyncEnabled.checked = fs.enabled && fs.profileId === pid;
+      settingsFolderSyncEnabled.disabled = false;
+    }
+    if (settingsFolderSyncEnableLabel) {
+      settingsFolderSyncEnableLabel.textContent = `Enable folder sync for “${profLabel}”`;
+    }
+    if (settingsFolderSyncProfileHint) {
+      if (fs.enabled && fs.profileId !== pid) {
+        const other = (appSettings.profiles || []).find((p) => p && p.id === fs.profileId);
+        settingsFolderSyncProfileHint.textContent = `Sync is enabled for “${other?.name || fs.profileId}”. Switch to that profile or turn sync off to change folder.`;
+        settingsFolderSyncProfileHint.hidden = false;
+        if (settingsFolderSyncEnabled) settingsFolderSyncEnabled.disabled = true;
+      } else {
+        settingsFolderSyncProfileHint.hidden = true;
+      }
+    }
+    if (fs.enabled && fs.folderPath && fs.profileId === pid) {
+      const when = Math.max(fs.lastPushedExportedAt, fs.lastImportedExportedAt);
+      setFolderSyncStatus(
+        when
+          ? `Last sync: ${new Date(when).toLocaleString()}${fs.pendingPush ? " (changes pending upload)" : ""}`
+          : fs.pendingPush
+            ? "Changes pending upload."
+            : "Folder sync enabled."
+      );
+    } else if (!settingsFolderSyncProfileHint || settingsFolderSyncProfileHint.hidden) {
+      setFolderSyncStatus("");
+    }
+  }
+
+  async function patchProfileFolderSync(patch) {
+    const cur = getActiveProfileFolderSync();
+    const next = { ...cur, ...patch };
+    if (window.nebula?.setSettings) {
+      try {
+        const merged = await window.nebula.setSettings({ profileFolderSync: next });
+        if (merged && typeof merged === "object") appSettings = normalizeAppSettings(merged);
+      } catch {
+        appSettings = normalizeAppSettings({ ...appSettings, profileFolderSync: next });
+      }
+    } else {
+      appSettings = normalizeAppSettings({ ...appSettings, profileFolderSync: next });
+    }
+    refreshFolderSyncSettingsUI();
+    return next;
+  }
+
+  async function markFolderSyncPending() {
+    if (!isFolderSyncActiveForCurrentProfile()) return;
+    const fs = getActiveProfileFolderSync();
+    if (fs.pendingPush) return;
+    await patchProfileFolderSync({ pendingPush: true });
+    scheduleFolderSyncPushDebounced();
+  }
+
+  function scheduleFolderSyncPushDebounced() {
+    if (!isFolderSyncActiveForCurrentProfile()) return;
+    if (folderSyncPushDebounceId) clearTimeout(folderSyncPushDebounceId);
+    folderSyncPushDebounceId = setTimeout(() => {
+      folderSyncPushDebounceId = null;
+      void runFolderSyncPush({ silent: true });
+    }, 45000);
+  }
+
+  async function getFolderSyncExportOptions() {
+    let hasAcct = vaultHasLocalAccount;
+    try {
+      const st = await window.nebula?.accountStatus?.();
+      hasAcct = !!(st && st.hasAccount);
+    } catch {
+      /* */
+    }
+    return {
+      settings: true,
+      bookmarks: true,
+      history: true,
+      aiChat: true,
+      vault: hasAcct,
+    };
+  }
+
+  async function collectRendererSectionsForFolderSync() {
+    const options = await getFolderSyncExportOptions();
+    return collectRendererSectionsForProfileExport(options);
+  }
+
+  function promptFolderSyncPassword(message) {
+    return new Promise((resolve) => {
+      if (!folderSyncPasswordPanel) {
+        const p = window.prompt(message || "Nebula account password:");
+        resolve(typeof p === "string" ? p : "");
+        return;
+      }
+      if (folderSyncSessionPassword) {
+        resolve(folderSyncSessionPassword);
+        return;
+      }
+      if (folderSyncPasswordMsg) folderSyncPasswordMsg.textContent = message || "Enter your Nebula account password.";
+      if (folderSyncPasswordInput) folderSyncPasswordInput.value = "";
+      if (folderSyncPasswordError) {
+        folderSyncPasswordError.hidden = true;
+        folderSyncPasswordError.textContent = "";
+      }
+      folderSyncPasswordPanel.hidden = false;
+      folderSyncPasswordPanel.setAttribute("aria-hidden", "false");
+      const done = (value) => {
+        folderSyncPasswordPanel.hidden = true;
+        folderSyncPasswordPanel.setAttribute("aria-hidden", "true");
+        folderSyncPasswordOk?.removeEventListener("click", onOk);
+        folderSyncPasswordClose?.removeEventListener("click", onCancel);
+        folderSyncPasswordBackdrop?.removeEventListener("click", onCancel);
+        folderSyncPasswordInput?.removeEventListener("keydown", onKey);
+        resolve(value);
+      };
+      const onOk = () => {
+        const v = folderSyncPasswordInput?.value ?? "";
+        if (v) folderSyncSessionPassword = v;
+        done(v);
+      };
+      const onCancel = () => done("");
+      const onKey = (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          onOk();
+        }
+        if (e.key === "Escape") {
+          e.preventDefault();
+          onCancel();
+        }
+      };
+      folderSyncPasswordOk?.addEventListener("click", onOk);
+      folderSyncPasswordClose?.addEventListener("click", onCancel);
+      folderSyncPasswordBackdrop?.addEventListener("click", onCancel);
+      folderSyncPasswordInput?.addEventListener("keydown", onKey);
+      queueMicrotask(() => folderSyncPasswordInput?.focus());
+    });
+  }
+
+  async function runFolderSyncPush(opts) {
+    const silent = !!(opts && opts.silent);
+    const nebula = window.nebula;
+    if (!nebula?.profileFolderSyncPush) return { ok: false };
+    const fs = getActiveProfileFolderSync();
+    if (!fs.folderPath) return { ok: false, error: "no_folder" };
+    const pid = sanitizeProfileIdForSession(appSettings.activeProfileId || "default");
+    const options = await getFolderSyncExportOptions();
+    let password = folderSyncSessionPassword;
+    if (!password) {
+      password = await promptFolderSyncPassword("Enter your password to upload profile data to the sync folder.");
+      if (!password) return { ok: false, canceled: true };
+    }
+    const prof = (appSettings.profiles || []).find((p) => p && p.id === pid);
+    const r = await nebula.profileFolderSyncPush({
+      password,
+      folderPath: fs.folderPath,
+      profileId: pid,
+      profileName: prof?.name || pid,
+      options,
+      rendererSections: await collectRendererSectionsForFolderSync(),
+    });
+    if (!r?.ok) {
+      if (!silent) setFolderSyncStatus(r.message || r.error || "Upload failed.", true);
+      return r;
+    }
+    await patchProfileFolderSync({
+      profileId: pid,
+      lastPushedExportedAt: r.exportedAt || Date.now(),
+      pendingPush: false,
+    });
+    if (!silent) setFolderSyncStatus(`Uploaded to sync folder at ${new Date().toLocaleString()}.`);
+    return r;
+  }
+
+  async function applyProfilePackMergeFromFolder(pack, available) {
+    const nebula = window.nebula;
+    if (!nebula?.profilePackImportApply) return { ok: false };
+    const options = {
+      settings: !!available.settings,
+      bookmarks: !!available.bookmarks,
+      history: !!available.history,
+      aiChat: !!available.aiChat,
+      vault: !!available.vault,
+    };
+    const r = await nebula.profilePackImportApply({
+      pack,
+      options,
+      importMode: "merge",
+      vaultMode: "merge",
+    });
+    if (!r?.ok) return r;
+    applyRendererProfilePackSections(r.targetProfileId, r.sectionsForRenderer || {}, options);
+    if (options.settings && nebula.getSettings) {
+      try {
+        appSettings = normalizeAppSettings(await nebula.getSettings());
+        applyShellAppearance();
+        syncChromeLayoutFromSettings();
+      } catch {
+        /* */
+      }
+    }
+    if (options.bookmarks) {
+      bookmarks = loadBookmarksFromStorage();
+      renderBookmarksBar();
+      updateBookmarkStar();
+    }
+    return r;
+  }
+
+  async function runFolderSyncPull(opts) {
+    const silent = !!(opts && opts.silent);
+    const nebula = window.nebula;
+    const fs = getActiveProfileFolderSync();
+    if (!fs.folderPath || !nebula?.profileFolderSyncDecrypt) return { ok: false };
+    let password = folderSyncSessionPassword;
+    if (!password) {
+      password = await promptFolderSyncPassword("Enter your password to import profile data from the sync folder.");
+      if (!password) return { ok: false, canceled: true };
+    }
+    const dec = await nebula.profileFolderSyncDecrypt({ folderPath: fs.folderPath, password });
+    if (!dec?.ok) {
+      if (!silent) setFolderSyncStatus(dec.message || dec.error || "Import failed.", true);
+      return dec;
+    }
+    const r = await applyProfilePackMergeFromFolder(dec.pack, dec.available || {});
+    if (!r?.ok) {
+      if (!silent) setFolderSyncStatus(r.error || "Merge failed.", true);
+      return r;
+    }
+    await patchProfileFolderSync({
+      lastImportedExportedAt: dec.exportedAt || dec.pack?.exportedAt || Date.now(),
+      pendingPush: false,
+    });
+    if (!silent) setFolderSyncStatus(`Imported from sync folder at ${new Date().toLocaleString()}.`);
+    refreshFolderSyncSettingsUI();
+    return { ok: true };
+  }
+
+  async function runFolderSyncNow() {
+    if (!isFolderSyncActiveForCurrentProfile()) {
+      setFolderSyncStatus("Enable folder sync and choose a folder first.", true);
+      return;
+    }
+    setFolderSyncStatus("Syncing…");
+    const fs = getActiveProfileFolderSync();
+    const meta = await window.nebula?.profileFolderSyncReadMeta?.({ folderPath: fs.folderPath });
+    const remoteAt = meta?.exportedAt || 0;
+    const localAt = Math.max(fs.lastPushedExportedAt, fs.lastImportedExportedAt);
+    if (remoteAt > localAt + 500) {
+      const pull = await runFolderSyncPull({ silent: false });
+      if (!pull?.ok && !pull?.canceled) return;
+    }
+    await runFolderSyncPush({ silent: false });
+    refreshFolderSyncSettingsUI();
+  }
+
+  async function runFolderSyncOnLaunch() {
+    if (!isFolderSyncActiveForCurrentProfile()) return;
+    const fs = getActiveProfileFolderSync();
+    const meta = await window.nebula?.profileFolderSyncReadMeta?.({ folderPath: fs.folderPath });
+    if (!meta?.ok) return;
+    const remoteAt = meta.exportedAt || 0;
+    const localAt = Math.max(fs.lastPushedExportedAt, fs.lastImportedExportedAt);
+    if (remoteAt > localAt + 500) {
+      const yes = window.confirm(
+        "Your sync folder has newer profile data than this copy of Nebula.\n\nImport now? (You will enter your account password.)"
+      );
+      if (yes) await runFolderSyncPull({ silent: false });
+      return;
+    }
+    if (fs.pendingPush) {
+      await runFolderSyncPush({ silent: true });
+    }
+  }
+
+  async function enableFolderSyncForCurrentProfile(folderPath) {
+    const pid = sanitizeProfileIdForSession(appSettings.activeProfileId || "default");
+    await patchProfileFolderSync({ folderPath, profileId: pid });
+    const push = await runFolderSyncPush({ silent: false });
+    if (!push?.ok) return false;
+    await patchProfileFolderSync({ enabled: true, profileId: pid, folderPath });
+    return true;
   }
 
   function mergeImportedBookmarks(imported) {
@@ -8258,6 +8618,38 @@
   });
   settingsProfileExport?.addEventListener("click", () => openProfilePackPanel("export"));
   settingsProfileImport?.addEventListener("click", () => openProfilePackPanel("import"));
+  settingsFolderSyncChoose?.addEventListener("click", async () => {
+    const pick = await window.nebula?.profileFolderSyncPickFolder?.();
+    if (!pick?.ok || pick.canceled || !pick.folderPath) return;
+    const pid = sanitizeProfileIdForSession(appSettings.activeProfileId || "default");
+    await patchProfileFolderSync({ folderPath: pick.folderPath, profileId: pid });
+    setFolderSyncStatus(`Folder: ${pick.folderPath}`);
+  });
+  settingsFolderSyncOpen?.addEventListener("click", () => {
+    const fs = getActiveProfileFolderSync();
+    if (fs.folderPath) void window.nebula?.profileFolderSyncOpenFolder?.({ folderPath: fs.folderPath });
+  });
+  settingsFolderSyncNow?.addEventListener("click", () => void runFolderSyncNow());
+  settingsFolderSyncEnabled?.addEventListener("change", async () => {
+    const pid = sanitizeProfileIdForSession(appSettings.activeProfileId || "default");
+    const fs = getActiveProfileFolderSync();
+    if (settingsFolderSyncEnabled?.checked) {
+      let folderPath = fs.folderPath;
+      if (!folderPath) {
+        const pick = await window.nebula?.profileFolderSyncPickFolder?.();
+        if (!pick?.ok || pick.canceled || !pick.folderPath) {
+          if (settingsFolderSyncEnabled) settingsFolderSyncEnabled.checked = false;
+          return;
+        }
+        folderPath = pick.folderPath;
+      }
+      const ok = await enableFolderSyncForCurrentProfile(folderPath);
+      if (!ok && settingsFolderSyncEnabled) settingsFolderSyncEnabled.checked = false;
+    } else {
+      await patchProfileFolderSync({ enabled: false, profileId: pid });
+      setFolderSyncStatus("Folder sync disabled.");
+    }
+  });
   profilePackClose?.addEventListener("click", () => closeProfilePackPanel());
   profilePackBackdrop?.addEventListener("click", () => closeProfilePackPanel());
   profilePackExportGo?.addEventListener("click", () => void runProfilePackExport());
@@ -9282,6 +9674,13 @@
     if (appSettings.firstRunOnboardingDone === false) {
       await runFirstRunOnboardingFlow();
     }
+    try {
+      const acct = await window.nebula?.accountStatus?.();
+      vaultHasLocalAccount = !!(acct && acct.hasAccount);
+    } catch {
+      /* */
+    }
+    await runFolderSyncOnLaunch();
     tryOfferSessionRestoreOnLaunch();
     setNavButtons();
     updateLoadingUI();

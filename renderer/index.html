@@ -519,6 +519,26 @@
           </div>
         </div>
       </div>
+      <div id="folder-sync-password-panel" class="vault-panel folder-sync-password-panel" hidden aria-hidden="true">
+        <div class="vault-panel-backdrop" id="folder-sync-password-backdrop" aria-hidden="true"></div>
+        <div class="vault-panel-dialog" role="dialog" aria-modal="true" aria-labelledby="folder-sync-password-title">
+          <div class="vault-panel-header">
+            <h2 id="folder-sync-password-title" class="vault-panel-title">Profile sync</h2>
+            <button type="button" class="vault-panel-close" id="folder-sync-password-close" title="Close" aria-label="Close">
+              ✕
+            </button>
+          </div>
+          <div class="vault-panel-body">
+            <p id="folder-sync-password-msg" class="settings-hint"></p>
+            <label class="settings-field">
+              <span class="settings-label">Nebula account password</span>
+              <input type="password" id="folder-sync-password-input" class="settings-input" autocomplete="current-password" />
+            </label>
+            <p id="folder-sync-password-error" class="settings-hint" hidden role="alert"></p>
+            <button type="button" class="settings-save-btn" id="folder-sync-password-ok">Continue</button>
+          </div>
+        </div>
+      </div>
       <div id="profile-pack-panel" class="vault-panel profile-pack-panel" hidden aria-hidden="true">
         <div class="vault-panel-backdrop" id="profile-pack-backdrop" aria-hidden="true"></div>
         <div class="vault-panel-dialog" role="dialog" aria-modal="true" aria-labelledby="profile-pack-title">
@@ -1203,7 +1223,7 @@
                 <button type="button" class="settings-action-btn" id="settings-bookmarks-export-json">Export JSON…</button>
               </div>
             </section>
-            <section class="settings-section" data-settings-category="Profiles &amp; private tabs" data-settings-keywords="profiles,private,incognito,tabs,cookies,session,export,import,backup,sync">
+            <section class="settings-section" data-settings-category="Profiles &amp; private tabs" data-settings-keywords="profiles,private,incognito,tabs,cookies,session,export,import,backup,sync,folder,onedrive,dropbox,cloud,beta">
               <h3 class="settings-section-title">Profiles &amp; private tabs</h3>
               <p class="settings-hint">
                 <strong>Profiles</strong> use separate cookies, saved sessions, <strong>bookmarks</strong>, and <strong>history</strong> (each profile has its own bar, address suggestions, and local storage keys). Switch profile below, click Save, and Nebula will restart automatically. Default migrates your previous global bookmarks and history the first time they load.
@@ -1220,6 +1240,36 @@
                 <button type="button" class="settings-action-btn" id="settings-profile-export">Export profile…</button>
                 <button type="button" class="settings-action-btn" id="settings-profile-import">Import profile…</button>
               </div>
+              <div class="settings-subsection-label">
+                Folder sync <span class="settings-beta-badge">Beta</span>
+              </div>
+              <p class="settings-hint">
+                Sync the <strong>current profile</strong> to a folder on this PC. Put that folder inside OneDrive, Google Drive,
+                Dropbox, or similar so other devices can use the same files. Nebula writes
+                <code>nebula-profile-sync.nebula-profile</code> (encrypted) plus a small metadata file.
+              </p>
+              <label class="settings-checkbox-row" id="settings-folder-sync-enable-wrap">
+                <input type="checkbox" id="settings-folder-sync-enabled" />
+                <span id="settings-folder-sync-enable-label">Enable folder sync for this profile</span>
+              </label>
+              <p id="settings-folder-sync-profile-hint" class="settings-hint" hidden></p>
+              <label class="settings-field">
+                <span class="settings-label">Sync folder</span>
+                <input
+                  type="text"
+                  id="settings-folder-sync-path"
+                  class="settings-input"
+                  readonly
+                  spellcheck="false"
+                  placeholder="Choose a folder…"
+                />
+              </label>
+              <div class="settings-bookmarks-row">
+                <button type="button" class="settings-action-btn" id="settings-folder-sync-choose">Choose folder…</button>
+                <button type="button" class="settings-action-btn" id="settings-folder-sync-open" hidden>Open folder</button>
+                <button type="button" class="settings-save-btn" id="settings-folder-sync-now">Sync now</button>
+              </div>
+              <p id="settings-folder-sync-status" class="settings-hint" role="status"></p>
               <div class="settings-bookmarks-row">
                 <button type="button" class="settings-action-btn" id="settings-profile-add">Add profile…</button>
                 <button type="button" class="settings-action-btn" id="settings-profile-remove">Remove selected</button>

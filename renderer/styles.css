@@ -3254,6 +3254,20 @@ body.startup-splash-done .content {
   margin-bottom: 0.5rem;
 }
 
+.settings-beta-badge {
+  display: inline-block;
+  margin-left: 0.35rem;
+  padding: 0.1rem 0.4rem;
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  vertical-align: middle;
+  color: var(--accent, #6eb5ff);
+  border: 1px solid color-mix(in srgb, var(--accent, #6eb5ff) 55%, transparent);
+  border-radius: 4px;
+}
+
 .vault-unlock-user {
   margin: 0 0 0.35rem;
   font-size: 0.95rem;

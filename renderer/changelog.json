@@ -1,6 +1,13 @@
 {
   "entries": [
     {
+      "version": "1.2.4",
+      "date": "2026-05-31",
+      "added": [
+        "Folder sync (Beta): sync the current profile to a folder you choose. Put that folder in OneDrive, Google Drive, or Dropbox to move data between PCs. Nebula uploads an encrypted profile pack on launch (when the folder is newer) and when you change data."
+      ]
+    },
+    {
       "version": "1.2.3",
       "date": "2026-05-25",
       "added": [

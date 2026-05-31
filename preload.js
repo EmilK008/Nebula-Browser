@@ -154,6 +154,11 @@ contextBridge.exposeInMainWorld("nebula", {
   profilePackExport: (payload) => ipcRenderer.invoke("nebula-profile-pack-export", payload ?? {}),
   profilePackImportOpen: (payload) => ipcRenderer.invoke("nebula-profile-pack-import-open", payload ?? {}),
   profilePackImportApply: (payload) => ipcRenderer.invoke("nebula-profile-pack-import-apply", payload ?? {}),
+  profileFolderSyncPickFolder: () => ipcRenderer.invoke("nebula-profile-folder-sync-pick-folder"),
+  profileFolderSyncReadMeta: (payload) => ipcRenderer.invoke("nebula-profile-folder-sync-read-meta", payload ?? {}),
+  profileFolderSyncPush: (payload) => ipcRenderer.invoke("nebula-profile-folder-sync-push", payload ?? {}),
+  profileFolderSyncDecrypt: (payload) => ipcRenderer.invoke("nebula-profile-folder-sync-decrypt", payload ?? {}),
+  profileFolderSyncOpenFolder: (payload) => ipcRenderer.invoke("nebula-profile-folder-sync-open-folder", payload ?? {}),
   registerGuestWindowOpen: (payload) => ipcRenderer.invoke("nebula-register-guest-window-open", payload ?? {}),
   /**
    * Picture-in-picture for the active tab guest page (see main process).

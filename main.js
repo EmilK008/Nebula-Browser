@@ -23,6 +23,7 @@ const nebulaAdblock = require("./adblock");
 const nebulaShortcuts = require("./lib/keyboard-shortcuts");
 const nebulaProfilePack = require("./lib/profile-pack");
 const nebulaAccountLib = require("./lib/nebula-account");
+const nebulaFolderSync = require("./lib/profile-folder-sync");
 
 /** guest `webContents.id` → `<webview partition=…>` string (OAuth popups + window.open must match). */
 const guestPartitionByWcId = new Map();
@@ -1560,6 +1561,8 @@ const DEFAULT_SETTINGS = {
   vaultKeepUnlockedUntilQuit: false,
   /** Full-screen orb splash on cold launch (renderer). */
   showStartupAnimation: true,
+  /** Beta: sync active profile to a folder (for OneDrive/Dropbox/etc.). */
+  profileFolderSync: { ...nebulaFolderSync.DEFAULT_PROFILE_FOLDER_SYNC },
 };
 
 /** Allowlisted ids for `nebula-vpn-helper-open-app` (must match renderer catalog). */
@@ -1688,6 +1691,7 @@ function normalizeSettings(s) {
     if (typeof o.showStartupAnimation !== "boolean") {
       o.showStartupAnimation = DEFAULT_SETTINGS.showStartupAnimation;
     }
+    o.profileFolderSync = nebulaFolderSync.normalizeProfileFolderSync(o.profileFolderSync, o.activeProfileId);
     return o;
   }
   const layers = ["past", "local", "remote"];
@@ -1732,6 +1736,7 @@ function normalizeSettings(s) {
   if (typeof o.showStartupAnimation !== "boolean") {
     o.showStartupAnimation = DEFAULT_SETTINGS.showStartupAnimation;
   }
+  o.profileFolderSync = nebulaFolderSync.normalizeProfileFolderSync(o.profileFolderSync, o.activeProfileId);
   return o;
 }
 
@@ -4846,8 +4851,7 @@ function makeUniqueProfileId(baseName, profiles) {
   return `${id}-${n}`.slice(0, 48);
 }
 
-ipcMain.handle("nebula-profile-pack-export", async (event, payload) => {
-  const win = BrowserWindow.fromWebContents(event.sender);
+function buildProfilePackEnvelopeFromPayload(payload) {
   const password = typeof payload?.password === "string" ? payload.password : "";
   const options = payload?.options && typeof payload.options === "object" ? payload.options : {};
   const includeVault = options.vault === true;
@@ -4893,8 +4897,25 @@ ipcMain.handle("nebula-profile-pack-export", async (event, payload) => {
     vaultEntries,
     rendererSections,
   });
+  const exportedAt = inner.exportedAt;
   const envelope = nebulaProfilePack.encryptPackInner(inner, password);
   const text = JSON.stringify(envelope, null, 2);
+  return {
+    ok: true,
+    text,
+    exportedAt,
+    profileId,
+    profileName,
+    accountId: acct?.accountId || null,
+    nebulaUsername: acct?.username || null,
+  };
+}
+
+ipcMain.handle("nebula-profile-pack-export", async (event, payload) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  const built = buildProfilePackEnvelopeFromPayload(payload);
+  if (!built.ok) return built;
+  const text = built.text;
   const safeName = profileName.replace(/[^a-zA-Z0-9._-]+/g, "-").slice(0, 40) || "profile";
   const result = await dialog.showSaveDialog(win || undefined, {
     title: "Export Nebula profile",
@@ -5030,6 +5051,108 @@ ipcMain.handle("nebula-profile-pack-import-apply", async (_e, payload) => {
       aiSearchHistory: options.aiChat && Array.isArray(sections.aiSearchHistory) ? sections.aiSearchHistory : null,
     },
   };
+});
+
+/** —— Profile folder sync (beta): read/write pack in user-chosen folder */
+
+ipcMain.handle("nebula-profile-folder-sync-pick-folder", async (event) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  const result = await dialog.showOpenDialog(win || undefined, {
+    title: "Choose folder for profile sync",
+    properties: ["openDirectory", "createDirectory"],
+  });
+  if (result.canceled || !result.filePaths?.length) return { ok: false, canceled: true };
+  return { ok: true, folderPath: result.filePaths[0] };
+});
+
+ipcMain.handle("nebula-profile-folder-sync-read-meta", (_e, payload) => {
+  const folderPath = typeof payload?.folderPath === "string" ? payload.folderPath.trim() : "";
+  if (!folderPath) return { ok: false, error: "no_folder" };
+  const r = nebulaFolderSync.readSyncMeta(folderPath);
+  if (!r.ok) return r;
+  const meta = r.meta;
+  const exportedAt = meta && typeof meta.exportedAt === "number" ? meta.exportedAt : 0;
+  return { ok: true, meta, exportedAt };
+});
+
+ipcMain.handle("nebula-profile-folder-sync-read-pack", (_e, payload) => {
+  const folderPath = typeof payload?.folderPath === "string" ? payload.folderPath.trim() : "";
+  if (!folderPath) return { ok: false, error: "no_folder" };
+  return nebulaFolderSync.readSyncPackFile(folderPath);
+});
+
+ipcMain.handle("nebula-profile-folder-sync-push", async (_e, payload) => {
+  const folderPath = typeof payload?.folderPath === "string" ? payload.folderPath.trim() : "";
+  if (!folderPath) return { ok: false, error: "no_folder" };
+  const built = buildProfilePackEnvelopeFromPayload(payload);
+  if (!built.ok) return built;
+  try {
+    nebulaFolderSync.writeSyncPackAndMeta(folderPath, built.text, {
+      v: 1,
+      exportedAt: built.exportedAt,
+      profileId: built.profileId,
+      profileName: built.profileName,
+      accountId: built.accountId,
+      nebulaUsername: built.nebulaUsername,
+      nebulaVersion: typeof NEBULA_PKG.version === "string" ? NEBULA_PKG.version : "",
+    });
+    return { ok: true, exportedAt: built.exportedAt, folderPath };
+  } catch (err) {
+    return { ok: false, error: String(err?.message || err) };
+  }
+});
+
+ipcMain.handle("nebula-profile-folder-sync-decrypt", (_e, payload) => {
+  const folderPath = typeof payload?.folderPath === "string" ? payload.folderPath.trim() : "";
+  const password = typeof payload?.password === "string" ? payload.password : "";
+  const auth = verifyProfilePackPassword(password, false);
+  if (!auth.ok) {
+    return {
+      ok: false,
+      error: auth.error,
+      message:
+        auth.error === "wrong_password"
+          ? "Incorrect Nebula account password."
+          : `Password must be at least ${PROFILE_PACK_MIN_PASSWORD} characters.`,
+    };
+  }
+  const read = nebulaFolderSync.readSyncPackFile(folderPath);
+  if (!read.ok) return read;
+  const parsed = nebulaProfilePack.parsePackFileText(read.text);
+  if (!parsed.ok) return { ok: false, error: parsed.error || "invalid_pack" };
+  if (parsed.pack) {
+    return { ok: false, error: "unencrypted_pack_not_supported" };
+  }
+  const dec = nebulaProfilePack.decryptPackEnvelope(parsed.envelope, password);
+  if (!dec.ok) {
+    return { ok: false, error: dec.error, message: "Could not decrypt. Check the password." };
+  }
+  const pack = dec.pack;
+  const sections = pack.sections && typeof pack.sections === "object" ? pack.sections : {};
+  return {
+    ok: true,
+    pack,
+    source: pack.source || {},
+    exportedAt: pack.exportedAt || 0,
+    available: {
+      settings: !!sections.settings,
+      bookmarks: Array.isArray(sections.bookmarks),
+      history: Array.isArray(sections.history),
+      aiChat: !!(sections.aiConversations || sections.aiSearchHistory),
+      vault: !!(sections.vault && Array.isArray(sections.vault.entries)),
+    },
+  };
+});
+
+ipcMain.handle("nebula-profile-folder-sync-open-folder", async (_e, payload) => {
+  const folderPath = typeof payload?.folderPath === "string" ? payload.folderPath.trim() : "";
+  if (!folderPath) return { ok: false };
+  try {
+    const err = await shell.openPath(folderPath);
+    return err ? { ok: false, error: err } : { ok: true };
+  } catch (e) {
+    return { ok: false, error: String(e?.message || e) };
+  }
 });
 
 /** —— Permission prompts (camera / mic / location ask) */
