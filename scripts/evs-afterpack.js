@@ -11,9 +11,13 @@
  * - `NEBULA_SKIP_EVS=1` — skip this hook entirely.
  * - `NEBULA_EVS_SIGN=1` — treat sign-pkg failure as a build error (CI / release).
  * - `CI=true` or `NEBULA_EVS_NO_ASK=1` — pass `--no-ask` to EVS (non-interactive).
+ * - `EVS_ACCOUNT_NAME` + `EVS_PASSWD` (or `.evs-credentials`) — pass `-A`/`-P`/`--no-ask`
+ *   so sign-pkg never prompts (needed when the terminal cannot accept password input).
  *
  * @param {any} context electron-builder PackContext / AfterPackContext
  */
+const { evsAuthCliArgs } = require("./evs-auth");
+
 module.exports = async function evsAfterPack(context) {
   if (process.env.NEBULA_SKIP_EVS === "1") {
     console.warn("[Nebula:EVS] NEBULA_SKIP_EVS=1 — skipping sign-pkg in afterPack.");
@@ -33,9 +37,15 @@ module.exports = async function evsAfterPack(context) {
     return;
   }
 
+  const authArgs = evsAuthCliArgs();
   const noAsk =
-    process.env.CI === "true" || process.env.CI === "1" || process.env.NEBULA_EVS_NO_ASK === "1"
-      ? ["--no-ask"]
+    authArgs.length > 0 ||
+    process.env.CI === "true" ||
+    process.env.CI === "1" ||
+    process.env.NEBULA_EVS_NO_ASK === "1"
+      ? authArgs.length > 0
+        ? authArgs
+        : ["--no-ask"]
       : [];
 
   const bases = [
@@ -63,7 +73,7 @@ module.exports = async function evsAfterPack(context) {
     if (strict) throw new Error(msg);
     console.error(msg);
     console.error(
-      "Install castlabs-evs, refresh EVS auth, or set NEBULA_SKIP_EVS=1. For CI, set NEBULA_EVS_SIGN=1 to fail the build on error."
+      "Install castlabs-evs, set EVS_ACCOUNT_NAME + EVS_PASSWD (or .evs-credentials), run npm run evs:reauth, or set NEBULA_SKIP_EVS=1."
     );
     return;
   }

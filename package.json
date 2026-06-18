@@ -12,6 +12,7 @@
     "start": "electron .",
     "dist": "node scripts/dist-unpacked-guard.js && electron-builder --win",
     "dist:dir": "node scripts/dist-unpacked-guard.js && electron-builder --win dir",
+    "evs:reauth": "node scripts/evs-reauth.js",
     "verify:vmp": "node scripts/verify-evs-vmp.js",
     "changelog:date": "node scripts/changelog-date.js",
     "postinstall": "electron-builder install-app-deps"

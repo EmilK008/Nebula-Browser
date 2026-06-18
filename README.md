@@ -81,6 +81,49 @@ From the project root:
 
 Artifacts are named like `Nebula-<version>-x64.exe` (installer) and `Nebula-<version>-Portable.exe` per `package.json` `build` settings.
 
+### Castlabs EVS (production VMP signing)
+
+Shipped Windows builds run `castlabs_evs.vmp sign-pkg` in an `afterPack` hook (`scripts/evs-afterpack.js`). EVS tokens expire about monthly; when they do, the client asks for your password.
+
+**Many terminals (including Cursor’s) cannot accept EVS password input** — the prompt appears but typing does nothing. Pass credentials on the command line or in a local file instead (same workaround as EVS account signup).
+
+1. **Local credentials file** (recommended):
+
+   ```powershell
+   cd C:\Browser
+   copy .evs-credentials.example .evs-credentials
+   # Edit .evs-credentials — set EVS_ACCOUNT_NAME and EVS_PASSWD
+   npm run evs:reauth
+   npm run dist
+   ```
+
+   `.evs-credentials` is gitignored.
+
+2. **One-off in PowerShell** (password may land in shell history):
+
+   ```powershell
+   py -3 -m castlabs_evs.account reauth -A YOUR_ACCOUNT_NAME -P YOUR_PASSWORD
+   npm run dist
+   ```
+
+   During `npm run dist`, the build passes the same `-A`/`-P` flags to `sign-pkg` if `EVS_ACCOUNT_NAME` and `EVS_PASSWD` are set (or loaded from `.evs-credentials`).
+
+3. **New EVS account** (email only needed for signup, not signing):
+
+   ```powershell
+   py -3 -m castlabs_evs.account signup -A accountname -E you@example.com -P yourpassword -F First -L Last -O "Your Org"
+   ```
+
+4. **Skip signing for a local test build**, then sign manually:
+
+   ```powershell
+   $env:NEBULA_SKIP_EVS="1"
+   npm run dist:dir
+   py -3 -m castlabs_evs.vmp sign-pkg -A YOUR_ACCOUNT_NAME -P YOUR_PASSWORD dist\win-unpacked
+   ```
+
+Requires `py -3 -m pip install castlabs-evs`. Verify with `npm run verify:vmp`. See the [Castlabs EVS wiki](https://github.com/castlabs/electron-releases/wiki/EVS).
+
 Other scripts (see `package.json`):
 
 - `npm run verify:vmp` — VMP / packaging verification helper for releases
