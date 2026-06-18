@@ -1,6 +1,6 @@
 {
   "name": "nebula-browser",
-  "version": "1.2.4",
+  "version": "1.3.0",
   "description": "A small Electron shell browser with a custom chrome",
   "nebula": {
     "updateRepo": "EmilK008/Nebula-Browser"
@@ -40,11 +40,12 @@
       "preload.js",
       "adblock.js",
       "lib/**/*",
+      "extensions/**/*",
       "renderer/**/*",
       "package.json"
     ],
     "asar": true,
-    "asarUnpack": ["**/node_modules/better-sqlite3/**/*"],
+    "asarUnpack": ["**/node_modules/better-sqlite3/**/*", "extensions/**/*"],
     "afterPack": "scripts/evs-afterpack.js",
     "win": {
       "signAndEditExecutable": false,

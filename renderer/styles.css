@@ -3401,6 +3401,226 @@ body.startup-splash-done .content {
   color: var(--text);
 }
 
+.settings-extensions-list {
+  list-style: none;
+  margin: 8px 0 10px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.settings-extensions-empty {
+  font-size: 12px;
+  color: var(--text-muted, #8a8f98);
+  padding: 6px 0;
+}
+
+.settings-extensions-item {
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.1));
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: var(--surface-elevated, rgba(255, 255, 255, 0.03));
+}
+
+.settings-extensions-item-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.settings-extensions-item-enable {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+}
+
+.settings-extensions-item-name {
+  font-weight: 600;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-extensions-item-path {
+  font-size: 11px;
+  color: var(--text-muted, #8a8f98);
+  word-break: break-all;
+  margin-bottom: 6px;
+}
+
+.settings-extensions-item-meta {
+  font-size: 11px;
+  color: var(--text-muted, #8a8f98);
+  margin-bottom: 4px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.settings-extensions-status-pill {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-muted, #8a8f98);
+}
+
+.settings-extensions-status-pill.is-ok {
+  background: rgba(72, 187, 120, 0.18);
+  color: #6ee7a0;
+}
+
+.settings-extensions-status-pill.is-warn {
+  background: rgba(234, 179, 8, 0.15);
+  color: #fbbf24;
+}
+
+.settings-extensions-status-pill.is-error {
+  background: rgba(232, 93, 93, 0.15);
+  color: #f87171;
+}
+
+.settings-extensions-status-pill.is-muted {
+  opacity: 0.85;
+}
+
+.settings-extensions-remove {
+  flex-shrink: 0;
+  border: none;
+  background: transparent;
+  color: var(--danger, #e85d5d);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 2px 6px;
+}
+
+.settings-extensions-remove:hover {
+  text-decoration: underline;
+}
+
+.settings-extensions-open {
+  font-size: 12px;
+  padding: 4px 10px;
+}
+
+.settings-extensions-row-actions {
+  margin-top: 2px;
+}
+
+.settings-extensions-conflicts {
+  margin: 6px 0 8px;
+  line-height: 1.45;
+}
+
+.extension-toolbar-wrap {
+  display: flex;
+  align-items: center;
+  margin-left: 2px;
+}
+
+.extension-toolbar-strip {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.extension-toolbar-btn {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.extension-toolbar-btn img,
+.extension-toolbar-btn .extension-toolbar-icon {
+  width: 18px;
+  height: 18px;
+  border-radius: 3px;
+  display: block;
+  object-fit: contain;
+}
+
+.extension-toolbar-fallback {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  background: rgba(74, 140, 255, 0.28);
+  color: #8ec1ff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  user-select: none;
+}
+
+.extension-toolbar-fallback[hidden] {
+  display: none !important;
+}
+
+.extension-popup-panel {
+  position: fixed;
+  z-index: 70;
+  width: 332px;
+  max-width: calc(100vw - 16px);
+  border-radius: 10px;
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.12));
+  background: #1a1d24;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+  overflow: hidden;
+}
+
+.extension-popup-panel[hidden] {
+  display: none !important;
+}
+
+.extension-popup-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px 6px 10px;
+  border-bottom: 1px solid var(--border, rgba(255, 255, 255, 0.1));
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.extension-popup-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.extension-popup-close {
+  border: none;
+  background: transparent;
+  color: var(--text-muted, #8a8f98);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 4px 6px;
+}
+
+.extension-popup-webview {
+  display: block;
+  width: 100%;
+  height: 220px;
+  border: none;
+  background: #1a1d24;
+}
+
 .nebula-account-block .settings-field {
   margin-bottom: 10px;
 }

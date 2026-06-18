@@ -159,6 +159,25 @@ contextBridge.exposeInMainWorld("nebula", {
   profileFolderSyncPush: (payload) => ipcRenderer.invoke("nebula-profile-folder-sync-push", payload ?? {}),
   profileFolderSyncDecrypt: (payload) => ipcRenderer.invoke("nebula-profile-folder-sync-decrypt", payload ?? {}),
   profileFolderSyncOpenFolder: (payload) => ipcRenderer.invoke("nebula-profile-folder-sync-open-folder", payload ?? {}),
+  extensionsPickUnpacked: () => ipcRenderer.invoke("nebula-extensions-pick-unpacked"),
+  extensionsReadManifest: (payload) => ipcRenderer.invoke("nebula-extensions-read-manifest", payload ?? {}),
+  extensionsOpenFolder: (payload) => ipcRenderer.invoke("nebula-extensions-open-folder", payload ?? {}),
+  extensionsSyncStatus: (payload) => ipcRenderer.invoke("nebula-extensions-sync-status", payload ?? {}),
+  extensionsToolbarActions: () => ipcRenderer.invoke("nebula-extensions-toolbar-actions"),
+  /**
+   * @param {(payload: object) => void} handler
+   * @returns {() => void} unsubscribe
+   */
+  onExtensionsChanged(handler) {
+    const channel = "nebula-extensions-changed";
+    const fn = (_event, payload) => {
+      handler(payload && typeof payload === "object" ? payload : {});
+    };
+    ipcRenderer.on(channel, fn);
+    return () => ipcRenderer.removeListener(channel, fn);
+  },
+  /** Dev Step 0: extension spike status (only when NEBULA_EXTENSION_SPIKE=1). */
+  extensionSpikeStatus: () => ipcRenderer.invoke("nebula-extension-spike-status"),
   registerGuestWindowOpen: (payload) => ipcRenderer.invoke("nebula-register-guest-window-open", payload ?? {}),
   /**
    * Picture-in-picture for the active tab guest page (see main process).

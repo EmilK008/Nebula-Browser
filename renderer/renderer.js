@@ -36,6 +36,69 @@
     };
   }
 
+  const MAX_EXTENSIONS_PER_PROFILE = 12;
+
+  function normalizeExtensionItemApp(raw) {
+    if (!raw || typeof raw !== "object") return null;
+    const extPath = typeof raw.path === "string" ? raw.path.trim() : "";
+    if (!extPath) return null;
+    let id = typeof raw.id === "string" ? raw.id.trim().slice(0, 64) : "";
+    if (!id) {
+      let h = 0;
+      for (let i = 0; i < extPath.length; i++) h = (h * 31 + extPath.charCodeAt(i)) >>> 0;
+      id = `ext-${h.toString(16)}`;
+    }
+    const slash = Math.max(extPath.lastIndexOf("/"), extPath.lastIndexOf("\\"));
+    const baseName = slash >= 0 ? extPath.slice(slash + 1) : extPath;
+    const name =
+      typeof raw.name === "string" && raw.name.trim() ? raw.name.trim().slice(0, 120) : baseName || "Extension";
+    const manifestVersion =
+      typeof raw.manifestVersion === "number" && Number.isFinite(raw.manifestVersion) ? raw.manifestVersion : 0;
+    const version = typeof raw.version === "string" ? raw.version.trim().slice(0, 32) : "";
+    return {
+      id,
+      path: extPath,
+      name,
+      version,
+      manifestVersion,
+      enabled: raw.enabled !== false,
+    };
+  }
+
+  function normalizeProfileExtensionsStateApp(raw) {
+    if (!raw || typeof raw !== "object") return { enabled: false, items: [] };
+    const itemsIn = Array.isArray(raw.items) ? raw.items : [];
+    const items = [];
+    const seenPath = new Set();
+    for (const row of itemsIn) {
+      const neu = normalizeExtensionItemApp(row);
+      if (!neu) continue;
+      const key = neu.path.toLowerCase();
+      if (seenPath.has(key)) continue;
+      seenPath.add(key);
+      items.push(neu);
+      if (items.length >= MAX_EXTENSIONS_PER_PROFILE) break;
+    }
+    return { enabled: raw.enabled === true, pauseBuiltinAdblock: raw.pauseBuiltinAdblock === true, items };
+  }
+
+  function normalizeProfileExtensionsApp(raw) {
+    if (!raw || typeof raw !== "object") return { byProfile: {} };
+    const byProfileIn = raw.byProfile && typeof raw.byProfile === "object" ? raw.byProfile : {};
+    const byProfile = {};
+    for (const [k, v] of Object.entries(byProfileIn)) {
+      const pid = sanitizeProfileIdForSession(k);
+      byProfile[pid] = normalizeProfileExtensionsStateApp(v);
+    }
+    return { byProfile };
+  }
+
+  function getProfileExtensionsStateForId(all, profileId) {
+    const norm = normalizeProfileExtensionsApp(all);
+    const pid = sanitizeProfileIdForSession(profileId || "default");
+    return norm.byProfile[pid] || { enabled: false, items: [] };
+  }
+
   function sanitizeProfileIdForSession(raw) {
     let s = typeof raw === "string" ? raw.trim().toLowerCase() : "";
     if (!s || s === "default") return "default";
@@ -411,6 +474,14 @@
   const settingsFolderSyncOpen = document.getElementById("settings-folder-sync-open");
   const settingsFolderSyncNow = document.getElementById("settings-folder-sync-now");
   const settingsFolderSyncStatus = document.getElementById("settings-folder-sync-status");
+  const settingsExtensionsEnabled = document.getElementById("settings-extensions-enabled");
+  const settingsExtensionsEnableLabel = document.getElementById("settings-extensions-enable-label");
+  const settingsExtensionsPauseAdblock = document.getElementById("settings-extensions-pause-adblock");
+  const settingsExtensionsPauseAdblockWrap = document.getElementById("settings-extensions-pause-adblock-wrap");
+  const settingsExtensionsConflicts = document.getElementById("settings-extensions-conflicts");
+  const settingsExtensionsList = document.getElementById("settings-extensions-list");
+  const settingsExtensionsAdd = document.getElementById("settings-extensions-add");
+  const settingsExtensionsStatus = document.getElementById("settings-extensions-status");
   const folderSyncPasswordPanel = document.getElementById("folder-sync-password-panel");
   const folderSyncPasswordBackdrop = document.getElementById("folder-sync-password-backdrop");
   const folderSyncPasswordClose = document.getElementById("folder-sync-password-close");
@@ -535,6 +606,12 @@
   const vpnPanelProviderList = document.getElementById("vpn-panel-provider-list");
   const vpnPanelOpenApp = document.getElementById("vpn-panel-open-app");
   const vpnPanelDownload = document.getElementById("vpn-panel-download");
+  const extensionToolbarWrap = document.getElementById("extension-toolbar-wrap");
+  const extensionToolbarStrip = document.getElementById("extension-toolbar-strip");
+  const extensionPopupPanel = document.getElementById("extension-popup-panel");
+  const extensionPopupTitle = document.getElementById("extension-popup-title");
+  const extensionPopupClose = document.getElementById("extension-popup-close");
+  const extensionPopupWebview = document.getElementById("extension-popup-webview");
 
   const AI_PRESET_MODELS = {
     openai: ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "o1-mini", "o1-preview"],
@@ -708,6 +785,7 @@
       lastImportedExportedAt: 0,
       pendingPush: false,
     },
+    profileExtensions: { byProfile: {} },
   };
 
   /** Official download pages only; `fixedProxyRules` only if accurate (otherwise Nebula uses system proxy when routing is on). */
@@ -1055,6 +1133,7 @@
       vaultKeepUnlockedUntilQuit: o.vaultKeepUnlockedUntilQuit === true,
       showStartupAnimation: o.showStartupAnimation !== false,
       profileFolderSync: normalizeProfileFolderSync(o.profileFolderSync, activeProfileId),
+      profileExtensions: normalizeProfileExtensionsApp(o.profileExtensions),
     };
     const ss = merged.searchSuggestions;
     const layers = ["past", "local", "remote"];
@@ -1959,7 +2038,7 @@
   function syncYoutubeAdSkipAdblockState() {
     if (window.NebulaYoutubeAdSkip && typeof window.NebulaYoutubeAdSkip.configure === "function") {
       window.NebulaYoutubeAdSkip.configure({
-        getAdblockBlockingEnabled: () => appSettings.adblockEnabled !== false,
+        getAdblockBlockingEnabled: () => effectiveBuiltinAdblockEnabledForApp(),
       });
     }
   }
@@ -4508,6 +4587,7 @@
     chk("settings-vault-keep-unlocked", s.vaultKeepUnlockedUntilQuit === true);
     chk("settings-show-startup-animation", s.showStartupAnimation !== false);
     refreshFolderSyncSettingsUI();
+    refreshExtensionsSettingsUI();
     const dse = document.getElementById("settings-default-search-engine");
     if (dse) dse.value = getDefaultSearchEngine();
     renderSettingsShortcutsTable();
@@ -4738,6 +4818,7 @@
     closeVaultPanel();
     closeTranslatePanel();
     closeAiDrawer();
+    closeExtensionPopupPanel();
     if (!findBar.hidden) closeFindBar();
     if (historyPanel && !historyPanel.hidden) closeHistoryPanel();
     if (sitePermPanel && !sitePermPanel.hidden) closeSitePermissionsPanel();
@@ -4751,6 +4832,7 @@
     void refreshTranslationKeyStatus();
     void refreshAiKeyStatus();
     void refreshSitePermissionSummary();
+    void refreshExtensionToolbar();
     queueMicrotask(() => document.getElementById("settings-adblock-enabled")?.focus());
   }
 
@@ -5624,6 +5706,486 @@
     }
     refreshFolderSyncSettingsUI();
     return next;
+  }
+
+  function getActiveProfileExtensionsState() {
+    return getProfileExtensionsStateForId(appSettings.profileExtensions, appSettings.activeProfileId);
+  }
+
+  function effectiveBuiltinAdblockEnabledForApp() {
+    if (appSettings.adblockEnabled === false) return false;
+    const state = getActiveProfileExtensionsState();
+    if (state.enabled && state.pauseBuiltinAdblock === true) return false;
+    return true;
+  }
+
+  function setExtensionsConflictsHint(text, isWarn) {
+    if (!settingsExtensionsConflicts) return;
+    if (!text) {
+      settingsExtensionsConflicts.hidden = true;
+      settingsExtensionsConflicts.textContent = "";
+      return;
+    }
+    settingsExtensionsConflicts.hidden = false;
+    settingsExtensionsConflicts.textContent = text;
+    settingsExtensionsConflicts.style.color = isWarn ? "var(--warn, #fbbf24)" : "";
+  }
+
+  function setExtensionsStatus(text, isError) {
+    if (!settingsExtensionsStatus) return;
+    settingsExtensionsStatus.textContent = text || "";
+    settingsExtensionsStatus.style.color = isError ? "var(--danger, #e85d5d)" : "";
+  }
+
+  /** @type {{ byPath: Map<string, { extensionId: string, name: string, version: string, path: string }>, errorsByPath: Map<string, string> } | null} */
+  let extensionsSessionLoadMeta = null;
+  /** @type {Map<string, object>} */
+  let extensionToolbarByPath = new Map();
+  /** @type {object | null} */
+  let extensionPopupOpenAction = null;
+
+  function normalizePathKeyForExtensions(p) {
+    if (typeof p !== "string" || !p.trim()) return "";
+    return p.trim().replace(/\\/g, "/").toLowerCase();
+  }
+
+  function buildExtensionsLoadMaps(st) {
+    const byPath = new Map();
+    const errorsByPath = new Map();
+    for (const row of st?.sessionExtensions || []) {
+      const key = normalizePathKeyForExtensions(row.path);
+      if (key) byPath.set(key, row);
+    }
+    for (const row of st?.sync?.errors || []) {
+      if (row.action !== "load" || !row.path) continue;
+      const key = normalizePathKeyForExtensions(row.path);
+      if (key) errorsByPath.set(key, String(row.error || "load failed"));
+    }
+    return { byPath, errorsByPath };
+  }
+
+  function reloadExtensionBrowsingTabs() {
+    const profilePart = appSettings.browsingPartition || "persist:nebula";
+    let reloaded = 0;
+    for (const t of tabs) {
+      if (!t?.el || t.isPrivate) continue;
+      if (t.guestPartition && t.guestPartition !== profilePart) continue;
+      let url = "";
+      try {
+        url = t.el.getURL() || "";
+      } catch {
+        continue;
+      }
+      if (!url || url === "about:blank" || isWelcomePageUrl(url)) continue;
+      try {
+        t.el.reload();
+        reloaded++;
+      } catch {
+        /* */
+      }
+    }
+    return reloaded;
+  }
+
+  function closeExtensionPopupPanel() {
+    if (!extensionPopupPanel) return;
+    extensionPopupPanel.hidden = true;
+    extensionPopupPanel.setAttribute("aria-hidden", "true");
+    extensionPopupOpenAction = null;
+    if (extensionPopupWebview) extensionPopupWebview.removeAttribute("src");
+  }
+
+  function openExtensionOptionsUrl(url) {
+    if (!url || typeof url !== "string") return;
+    createTab(url.trim());
+  }
+
+  function openExtensionPopupPanel(action, anchorEl) {
+    if (!action) return;
+    if (!action.popupUrl) {
+      if (action.optionsUrl) openExtensionOptionsUrl(action.optionsUrl);
+      return;
+    }
+    if (!extensionPopupPanel || !extensionPopupWebview) return;
+    closeTranslatePanel();
+    closeVpnPanel();
+    if (extensionPopupOpenAction?.extensionId === action.extensionId && !extensionPopupPanel.hidden) {
+      closeExtensionPopupPanel();
+      return;
+    }
+    closeExtensionPopupPanel();
+    extensionPopupOpenAction = action;
+    if (extensionPopupTitle) extensionPopupTitle.textContent = action.title || action.name || "Extension";
+    extensionPopupWebview.setAttribute("partition", appSettings.browsingPartition || "persist:nebula");
+    extensionPopupWebview.setAttribute(
+      "webpreferences",
+      "contextIsolation=yes,nodeIntegration=no,sandbox=no,nativeWindowOpen=yes"
+    );
+    extensionPopupWebview.setAttribute("src", action.popupUrl);
+    extensionPopupPanel.hidden = false;
+    extensionPopupPanel.setAttribute("aria-hidden", "false");
+    if (anchorEl instanceof HTMLElement) {
+      const r = anchorEl.getBoundingClientRect();
+      extensionPopupPanel.style.top = `${Math.round(r.bottom + 6)}px`;
+      extensionPopupPanel.style.left = `${Math.round(Math.min(r.left, window.innerWidth - 340))}px`;
+    }
+  }
+
+  function extensionToolbarFallbackLetter(name) {
+    const s = typeof name === "string" ? name.trim() : "";
+    return (s ? s.slice(0, 1) : "E").toUpperCase();
+  }
+
+  function mountExtensionToolbarIcon(btn, action) {
+    const fallback = document.createElement("span");
+    fallback.className = "extension-toolbar-fallback";
+    fallback.textContent = extensionToolbarFallbackLetter(action.name);
+    fallback.hidden = true;
+    btn.appendChild(fallback);
+
+    const showFallback = () => {
+      fallback.hidden = false;
+    };
+
+    if (action.iconDataUrl) {
+      const img = document.createElement("img");
+      img.className = "extension-toolbar-icon";
+      img.src = action.iconDataUrl;
+      img.alt = "";
+      img.width = 18;
+      img.height = 18;
+      img.decoding = "async";
+      img.addEventListener("error", () => {
+        img.remove();
+        showFallback();
+      });
+      img.addEventListener("load", () => {
+        if (img.naturalWidth > 0 && img.naturalHeight > 0) {
+          fallback.hidden = true;
+        } else {
+          img.remove();
+          showFallback();
+        }
+      });
+      btn.appendChild(img);
+    } else {
+      showFallback();
+    }
+  }
+
+  async function refreshExtensionToolbar() {
+    if (!extensionToolbarWrap || !extensionToolbarStrip) return;
+    extensionToolbarByPath.clear();
+    const state = getActiveProfileExtensionsState();
+    if (!state.enabled || !window.nebula?.extensionsToolbarActions) {
+      extensionToolbarStrip.innerHTML = "";
+      extensionToolbarWrap.hidden = true;
+      extensionToolbarWrap.setAttribute("aria-hidden", "true");
+      closeExtensionPopupPanel();
+      return;
+    }
+    let resp = null;
+    try {
+      resp = await window.nebula.extensionsToolbarActions();
+    } catch {
+      resp = null;
+    }
+    const actions = resp?.ok && Array.isArray(resp.actions) ? resp.actions : [];
+    extensionToolbarStrip.innerHTML = "";
+    for (const action of actions) {
+      if (action.path) extensionToolbarByPath.set(normalizePathKeyForExtensions(action.path), action);
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "extension-toolbar-btn icon-btn";
+      btn.title = action.title || action.name || "Extension";
+      btn.dataset.extChromeId = action.extensionId || "";
+      mountExtensionToolbarIcon(btn, action);
+      btn.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        openExtensionPopupPanel(action, btn);
+      });
+      btn.addEventListener("contextmenu", (e) => {
+        e.preventDefault();
+        if (action.optionsUrl) openExtensionOptionsUrl(action.optionsUrl);
+      });
+      extensionToolbarStrip.appendChild(btn);
+    }
+    const show = actions.length > 0;
+    extensionToolbarWrap.hidden = !show;
+    extensionToolbarWrap.setAttribute("aria-hidden", show ? "false" : "true");
+    if (!show) closeExtensionPopupPanel();
+  }
+
+  function renderExtensionsListItems(state, loadMaps) {
+    if (!settingsExtensionsList) return;
+    settingsExtensionsList.innerHTML = "";
+    const items = Array.isArray(state?.items) ? state.items : [];
+    if (!items.length) {
+      const li = document.createElement("li");
+      li.className = "settings-extensions-empty";
+      li.textContent = "No extensions added yet.";
+      settingsExtensionsList.appendChild(li);
+      return;
+    }
+    const profileEnabled = state.enabled === true;
+    const maps = loadMaps || extensionsSessionLoadMeta || { byPath: new Map(), errorsByPath: new Map() };
+    for (const item of items) {
+      const li = document.createElement("li");
+      li.className = "settings-extensions-item";
+      li.dataset.extId = item.id;
+      const head = document.createElement("div");
+      head.className = "settings-extensions-item-head";
+      const chkLabel = document.createElement("label");
+      chkLabel.className = "settings-checkbox-row settings-extensions-item-enable";
+      const chk = document.createElement("input");
+      chk.type = "checkbox";
+      chk.checked = item.enabled !== false;
+      chk.disabled = !profileEnabled;
+      chk.dataset.extToggle = item.id;
+      chkLabel.appendChild(chk);
+      const title = document.createElement("span");
+      title.className = "settings-extensions-item-name";
+      const ver = item.version ? ` v${item.version}` : "";
+      title.textContent = `${item.name || "Extension"}${ver}`;
+      chkLabel.appendChild(title);
+      head.appendChild(chkLabel);
+      const removeBtn = document.createElement("button");
+      removeBtn.type = "button";
+      removeBtn.className = "settings-extensions-remove";
+      removeBtn.dataset.extRemove = item.id;
+      removeBtn.textContent = "Remove";
+      removeBtn.title = "Remove from list";
+      head.appendChild(removeBtn);
+      li.appendChild(head);
+      const pathKey = normalizePathKeyForExtensions(item.path);
+      const loaded = maps.byPath.get(pathKey);
+      const loadErr = maps.errorsByPath.get(pathKey);
+      const meta = document.createElement("div");
+      meta.className = "settings-extensions-item-meta";
+      const mv = item.manifestVersion ? `MV${item.manifestVersion}` : "";
+      let status = "";
+      let statusClass = "settings-extensions-status-pill";
+      if (!profileEnabled) {
+        status = "Profile extensions off";
+        statusClass += " is-muted";
+      } else if (item.enabled === false) {
+        status = "Disabled";
+        statusClass += " is-muted";
+      } else if (loadErr) {
+        status = "Load error";
+        statusClass += " is-error";
+      } else if (loaded) {
+        status = "Loaded";
+        statusClass += " is-ok";
+      } else {
+        status = "Not loaded";
+        statusClass += " is-warn";
+      }
+      if (loaded?.extensionId) meta.title = `Extension id: ${loaded.extensionId}`;
+      if (loadErr) meta.title = loadErr;
+      const pill = document.createElement("span");
+      pill.className = statusClass;
+      pill.textContent = status;
+      if (mv) meta.append(document.createTextNode(`${mv} · `));
+      meta.appendChild(pill);
+      li.appendChild(meta);
+      const pathEl = document.createElement("div");
+      pathEl.className = "settings-extensions-item-path";
+      pathEl.textContent = item.path;
+      pathEl.title = item.path;
+      li.appendChild(pathEl);
+      const toolbarMeta = extensionToolbarByPath.get(pathKey);
+      const rowActions = document.createElement("div");
+      rowActions.className = "settings-bookmarks-row settings-extensions-row-actions";
+      if (toolbarMeta?.optionsUrl) {
+        const optBtn = document.createElement("button");
+        optBtn.type = "button";
+        optBtn.className = "settings-action-btn settings-extensions-options";
+        optBtn.dataset.extOptionsUrl = toolbarMeta.optionsUrl;
+        optBtn.textContent = "Options";
+        rowActions.appendChild(optBtn);
+      }
+      const openBtn = document.createElement("button");
+      openBtn.type = "button";
+      openBtn.className = "settings-action-btn settings-extensions-open";
+      openBtn.dataset.extOpen = item.id;
+      openBtn.textContent = "Open folder";
+      rowActions.appendChild(openBtn);
+      li.appendChild(rowActions);
+      settingsExtensionsList.appendChild(li);
+    }
+  }
+
+  async function refreshExtensionsLoadStatusFromMain() {
+    const state = getActiveProfileExtensionsState();
+    if (!state.items.length) {
+      extensionsSessionLoadMeta = null;
+      return null;
+    }
+    if (!window.nebula?.extensionsSyncStatus) return null;
+    try {
+      const st = await window.nebula.extensionsSyncStatus();
+      extensionsSessionLoadMeta = buildExtensionsLoadMaps(st);
+      renderExtensionsListItems(state, extensionsSessionLoadMeta);
+      const sync = st?.sync;
+      if (!sync) return st;
+      const activeCount = (sync.loaded?.length || 0) + (sync.skipped?.length || 0);
+      const errs = sync.errors?.length || 0;
+      if (!state.enabled) {
+        setExtensionsStatus(`${state.items.length} extension(s) saved (enable above to load).`);
+        return st;
+      }
+      if (errs) {
+        setExtensionsStatus(
+          `${activeCount} extension(s) on session. ${errs} load error(s) — see terminal for details.`,
+          true
+        );
+        return st;
+      }
+      setExtensionsStatus(`${activeCount} of ${state.items.filter((x) => x.enabled !== false).length} enabled extension(s) loaded.`);
+      refreshExtensionsConflictsFromSync(st);
+      return st;
+    } catch {
+      return null;
+    }
+  }
+
+  function refreshExtensionsConflictsFromSync(st) {
+    const conflicts = st?.conflicts;
+    if (!conflicts) {
+      setExtensionsConflictsHint("");
+      return;
+    }
+    const hints = Array.isArray(conflicts.hints) ? conflicts.hints : [];
+    const warn =
+      conflicts.extensionsEnabled &&
+      conflicts.builtinAdblockOn &&
+      !conflicts.pauseBuiltinAdblock &&
+      Array.isArray(conflicts.adblockLikeLoaded) &&
+      conflicts.adblockLikeLoaded.length > 0;
+    setExtensionsConflictsHint(hints.join(" "), warn);
+    syncYoutubeAdSkipAdblockState();
+  }
+
+  function refreshExtensionsSettingsUI() {
+    const state = getActiveProfileExtensionsState();
+    const pid = sanitizeProfileIdForSession(appSettings.activeProfileId || "default");
+    const prof = (appSettings.profiles || []).find((p) => p && p.id === pid);
+    const profLabel = prof?.name || pid;
+    if (settingsExtensionsEnabled) settingsExtensionsEnabled.checked = state.enabled === true;
+    if (settingsExtensionsEnableLabel) {
+      settingsExtensionsEnableLabel.textContent = `Enable extensions for “${profLabel}”`;
+    }
+    if (settingsExtensionsPauseAdblock) {
+      settingsExtensionsPauseAdblock.checked = state.pauseBuiltinAdblock === true;
+      settingsExtensionsPauseAdblock.disabled = !state.enabled;
+    }
+    if (settingsExtensionsPauseAdblockWrap) {
+      settingsExtensionsPauseAdblockWrap.style.opacity = state.enabled ? "1" : "0.55";
+    }
+    renderExtensionsListItems(state, extensionsSessionLoadMeta || undefined);
+    if (settingsExtensionsAdd) {
+      settingsExtensionsAdd.disabled = state.items.length >= MAX_EXTENSIONS_PER_PROFILE;
+    }
+    if (!state.items.length) {
+      setExtensionsStatus("");
+      setExtensionsConflictsHint("");
+    } else if (!state.enabled) {
+      setExtensionsStatus(`${state.items.length} extension(s) saved (enable above to load).`);
+    } else {
+      setExtensionsStatus("Syncing extensions…");
+      void refreshExtensionsLoadStatusFromMain();
+    }
+  }
+
+  async function patchProfileExtensionsForCurrentProfile(patch) {
+    const pid = sanitizeProfileIdForSession(appSettings.activeProfileId || "default");
+    const all = normalizeProfileExtensionsApp(appSettings.profileExtensions);
+    const cur = all.byProfile[pid] || { enabled: false, items: [] };
+    const nextState = normalizeProfileExtensionsStateApp({ ...cur, ...patch });
+    const next = {
+      byProfile: {
+        ...all.byProfile,
+        [pid]: nextState,
+      },
+    };
+    if (window.nebula?.setSettings) {
+      try {
+        const merged = await window.nebula.setSettings({ profileExtensions: next });
+        if (merged && typeof merged === "object") appSettings = normalizeAppSettings(merged);
+      } catch {
+        appSettings = normalizeAppSettings({ ...appSettings, profileExtensions: next });
+      }
+    } else {
+      appSettings = normalizeAppSettings({ ...appSettings, profileExtensions: next });
+    }
+    refreshExtensionsSettingsUI();
+    return nextState;
+  }
+
+  async function refreshExtensionsAfterSettingsChange() {
+    refreshExtensionsSettingsUI();
+    await refreshExtensionsLoadStatusFromMain();
+    await refreshExtensionToolbar();
+    renderExtensionsListItems(getActiveProfileExtensionsState(), extensionsSessionLoadMeta || undefined);
+    const n = reloadExtensionBrowsingTabs();
+    if (n > 0) {
+      const cur = settingsExtensionsStatus?.textContent || "";
+      if (cur) setExtensionsStatus(`${cur} Reloaded ${n} tab(s).`);
+    }
+  }
+
+  async function addUnpackedExtensionFromPicker() {
+    const state = getActiveProfileExtensionsState();
+    if (state.items.length >= MAX_EXTENSIONS_PER_PROFILE) {
+      setExtensionsStatus(`Maximum ${MAX_EXTENSIONS_PER_PROFILE} extensions per profile.`, true);
+      return;
+    }
+    const pick = await window.nebula?.extensionsPickUnpacked?.();
+    if (!pick?.ok || pick.canceled) return;
+    if (!pick.path) {
+      setExtensionsStatus(pick.message || "Could not read extension folder.", true);
+      return;
+    }
+    const exists = state.items.some((x) => x.path.toLowerCase() === String(pick.path).toLowerCase());
+    if (exists) {
+      setExtensionsStatus("That extension is already in the list.", true);
+      return;
+    }
+    const item = normalizeExtensionItemApp({
+      path: pick.path,
+      name: pick.name,
+      version: pick.version,
+      manifestVersion: pick.manifestVersion,
+      enabled: true,
+    });
+    if (!item) {
+      setExtensionsStatus("Invalid extension folder.", true);
+      return;
+    }
+    await patchProfileExtensionsForCurrentProfile({ items: [...state.items, item] });
+    let msg = `Added “${item.name}”.`;
+    if (pick.looksLikeAdblock) {
+      msg += " This extension looks like an ad blocker — consider pausing Nebula adblock below.";
+    }
+    setExtensionsStatus(msg, !!pick.looksLikeAdblock);
+    await refreshExtensionsAfterSettingsChange();
+  }
+
+  async function removeExtensionById(extId) {
+    const state = getActiveProfileExtensionsState();
+    const nextItems = state.items.filter((x) => x.id !== extId);
+    if (nextItems.length === state.items.length) return;
+    await patchProfileExtensionsForCurrentProfile({ items: nextItems });
+    setExtensionsStatus("Extension removed from list.");
+    await refreshExtensionsAfterSettingsChange();
+  }
+
+  async function toggleExtensionEnabled(extId, enabled) {
+    const state = getActiveProfileExtensionsState();
+    const nextItems = state.items.map((x) => (x.id === extId ? { ...x, enabled } : x));
+    await patchProfileExtensionsForCurrentProfile({ items: nextItems });
   }
 
   async function markFolderSyncPending() {
@@ -8650,6 +9212,66 @@
       setFolderSyncStatus("Folder sync disabled.");
     }
   });
+  settingsExtensionsEnabled?.addEventListener("change", async () => {
+    const enabled = !!settingsExtensionsEnabled?.checked;
+    await patchProfileExtensionsForCurrentProfile({ enabled });
+    if (enabled) {
+      setExtensionsStatus("Extensions enabled — loading…");
+    } else {
+      setExtensionsStatus("Extensions disabled for this profile.");
+    }
+    await refreshExtensionsAfterSettingsChange();
+    syncYoutubeAdSkipAdblockState();
+  });
+  settingsExtensionsPauseAdblock?.addEventListener("change", async () => {
+    const pauseBuiltinAdblock = !!settingsExtensionsPauseAdblock?.checked;
+    await patchProfileExtensionsForCurrentProfile({ pauseBuiltinAdblock });
+    await refreshExtensionsAfterSettingsChange();
+    syncYoutubeAdSkipAdblockState();
+  });
+  settingsExtensionsAdd?.addEventListener("click", () => void addUnpackedExtensionFromPicker());
+  extensionPopupClose?.addEventListener("click", () => closeExtensionPopupPanel());
+  document.addEventListener("mousedown", (e) => {
+    if (!extensionPopupPanel || extensionPopupPanel.hidden) return;
+    const t = e.target instanceof Element ? e.target : null;
+    if (t?.closest("#extension-popup-panel") || t?.closest(".extension-toolbar-btn")) return;
+    closeExtensionPopupPanel();
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") closeExtensionPopupPanel();
+  });
+  settingsExtensionsList?.addEventListener("click", (e) => {
+    const t = e.target instanceof Element ? e.target : null;
+    const removeBtn = t?.closest("[data-ext-remove]");
+    if (removeBtn) {
+      e.preventDefault();
+      const id = String(removeBtn.getAttribute("data-ext-remove") || "");
+      if (id) void removeExtensionById(id);
+      return;
+    }
+    const openBtn = t?.closest("[data-ext-open]");
+    if (openBtn) {
+      e.preventDefault();
+      const id = String(openBtn.getAttribute("data-ext-open") || "");
+      const item = getActiveProfileExtensionsState().items.find((x) => x.id === id);
+      if (item?.path) void window.nebula?.extensionsOpenFolder?.({ path: item.path });
+      return;
+    }
+    const optBtn = t?.closest("[data-ext-options-url]");
+    if (optBtn) {
+      e.preventDefault();
+      const url = String(optBtn.getAttribute("data-ext-options-url") || "");
+      if (url) openExtensionOptionsUrl(url);
+    }
+  });
+  settingsExtensionsList?.addEventListener("change", (e) => {
+    const t = e.target;
+    if (!(t instanceof HTMLInputElement) || !t.dataset.extToggle) return;
+    void (async () => {
+      await toggleExtensionEnabled(String(t.dataset.extToggle), t.checked);
+      await refreshExtensionsAfterSettingsChange();
+    })();
+  });
   profilePackClose?.addEventListener("click", () => closeProfilePackPanel());
   profilePackBackdrop?.addEventListener("click", () => closeProfilePackPanel());
   profilePackExportGo?.addEventListener("click", () => void runProfilePackExport());
@@ -9343,6 +9965,13 @@
     window.nebula.onAction(handleAction);
   }
 
+  if (window.nebula?.onExtensionsChanged) {
+    window.nebula.onExtensionsChanged(() => {
+      void refreshExtensionToolbar();
+      void refreshExtensionsLoadStatusFromMain();
+    });
+  }
+
   if (window.nebula?.onContextAction) {
     window.nebula.onContextAction((payload) => {
       if (!payload || typeof payload !== "object") return;
@@ -9454,6 +10083,7 @@
   syncYoutubeAdSkipAdblockState();
   applyShellAppearance();
   syncChromeLayoutFromSettings();
+  void refreshExtensionToolbar();
   async function applyFirstRunSettingsPatch(patch) {
     if (!window.nebula?.setSettings) return;
     try {

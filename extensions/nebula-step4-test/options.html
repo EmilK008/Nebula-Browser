@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Nebula Step 4 Options</title>
+    <style>
+      body {
+        margin: 0;
+        font: 14px/1.5 system-ui, sans-serif;
+        color: #e8eaed;
+        background: #12151a;
+        padding: 24px;
+        max-width: 640px;
+      }
+      h1 {
+        margin: 0 0 8px;
+        font-size: 20px;
+      }
+      p {
+        color: #9aa0a6;
+      }
+      label {
+        display: block;
+        margin: 16px 0 6px;
+        font-weight: 600;
+      }
+      input {
+        width: 100%;
+        max-width: 360px;
+        padding: 8px 10px;
+        border-radius: 8px;
+        border: 1px solid #3c4048;
+        background: #1a1d24;
+        color: #e8eaed;
+      }
+      .saved {
+        margin-top: 12px;
+        color: #6ee7a0;
+        font-weight: 600;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Nebula Step 4 — Options</h1>
+    <p>This page opened from the extension <strong>options_ui</strong> entry. Change the note and it persists in extension storage.</p>
+    <label for="note">Test note</label>
+    <input type="text" id="note" maxlength="120" placeholder="Hello from options page" />
+    <p id="saved" class="saved" hidden>Saved.</p>
+    <script src="options.js"></script>
+  </body>
+</html>

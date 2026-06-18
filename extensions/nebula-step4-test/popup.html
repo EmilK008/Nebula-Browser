@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Nebula Step 4 Popup</title>
+    <style>
+      body {
+        margin: 0;
+        width: 320px;
+        min-height: 180px;
+        font: 13px/1.45 system-ui, sans-serif;
+        color: #e8eaed;
+        background: #1a1d24;
+        padding: 14px;
+        box-sizing: border-box;
+      }
+      h1 {
+        margin: 0 0 8px;
+        font-size: 15px;
+      }
+      p {
+        margin: 0 0 10px;
+        color: #9aa0a6;
+      }
+      .ok {
+        color: #6ee7a0;
+        font-weight: 600;
+      }
+      button {
+        border: none;
+        border-radius: 8px;
+        padding: 8px 12px;
+        background: #4a8cff;
+        color: #fff;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      #count {
+        margin-top: 8px;
+        font-size: 12px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Extension popup</h1>
+    <p>If you see this panel, Nebula opened the <span class="ok">action popup</span> correctly.</p>
+    <button type="button" id="bump">Bump counter</button>
+    <div id="count">Opens: 0</div>
+    <script src="popup.js"></script>
+  </body>
+</html>

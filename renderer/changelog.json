@@ -1,6 +1,48 @@
 {
   "entries": [
     {
+      "version": "1.3.0",
+      "date": "2026-06-18",
+      "added": [
+        "Browser extensions (Beta) Step 5: coexistence with Nebula systems — pause built-in adblock per profile when extensions are on, warnings when an ad-blocker-like extension is loaded, profile-switch extension sync, and notes about guest preloads/private tabs."
+      ]
+    },
+    {
+      "version": "1.2.9",
+      "date": "2026-06-18",
+      "added": [
+        "Browser extensions (Beta) Step 4: toolbar icons for loaded extensions, in-browser action popups, and options pages in a new tab. Bundled test extension at extensions/nebula-step4-test for popup/options verification."
+      ]
+    },
+    {
+      "version": "1.2.8",
+      "date": "2026-06-18",
+      "added": [
+        "Browser extensions (Beta) Step 3: each row shows manifest version and load status; toggling or editing the list reloads normal browsing tabs so content scripts apply without a manual refresh."
+      ]
+    },
+    {
+      "version": "1.2.7",
+      "date": "2026-06-18",
+      "added": [
+        "Browser extensions (Beta): Nebula now loads enabled unpacked extensions from your per-profile list on startup and when you change settings. Reload tabs if a content script does not appear on already-open pages."
+      ]
+    },
+    {
+      "version": "1.2.6",
+      "date": "2026-06-18",
+      "added": [
+        "Browser extensions (Beta) in Settings → Profiles: enable per profile, add unpacked extension folders (manifest validated), toggle or remove entries. List is saved per profile; loading extensions from this list arrives in the next step."
+      ]
+    },
+    {
+      "version": "1.2.5",
+      "date": "2026-06-18",
+      "added": [
+        "Developer: Step 0 Chrome extension spike (opt-in via NEBULA_EXTENSION_SPIKE=1). Loads a bundled test extension on the default profile partition to validate webview extension support before a user-facing extensions feature."
+      ]
+    },
+    {
       "version": "1.2.4",
       "date": "2026-05-31",
       "added": [

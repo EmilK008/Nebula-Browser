@@ -24,6 +24,11 @@ const nebulaShortcuts = require("./lib/keyboard-shortcuts");
 const nebulaProfilePack = require("./lib/profile-pack");
 const nebulaAccountLib = require("./lib/nebula-account");
 const nebulaFolderSync = require("./lib/profile-folder-sync");
+const nebulaExtensionSpike = require("./lib/extension-spike");
+const nebulaExtensionsSettings = require("./lib/browser-extensions-settings");
+const nebulaExtensionsLoader = require("./lib/browser-extensions-loader");
+const nebulaExtensionsUi = require("./lib/browser-extensions-ui");
+const nebulaExtensionsConflicts = require("./lib/browser-extensions-conflicts");
 
 /** guest `webContents.id` → `<webview partition=…>` string (OAuth popups + window.open must match). */
 const guestPartitionByWcId = new Map();
@@ -42,6 +47,23 @@ function browsingPersistPartitionForProfileId(profileId) {
   const id = sanitizeProfileId(profileId);
   if (id === "default") return "persist:nebula";
   return `persist:nebula-${id}`;
+}
+
+function applyAdblockForBrowsingProfile(settings, profileId) {
+  const bp = browsingPersistPartitionForProfileId(profileId);
+  const effective = nebulaExtensionsConflicts.resolveBuiltinAdblockEnabled(settings, profileId);
+  nebulaAdblock.applyAdblockFromSettings({ ...settings, adblockEnabled: effective }, bp);
+}
+
+function applyAdblockForIncognitoProfile(settings, profileId) {
+  const ip = incognitoMemoryPartitionForProfileId(profileId);
+  nebulaAdblock.applyAdblockFromSettings(settings, ip);
+}
+
+function applyAdblockForActiveProfile(settings) {
+  const pid = settings.activeProfileId || "default";
+  applyAdblockForBrowsingProfile(settings, pid);
+  applyAdblockForIncognitoProfile(settings, pid);
 }
 
 function incognitoMemoryPartitionForProfileId(profileId) {
@@ -1563,6 +1585,8 @@ const DEFAULT_SETTINGS = {
   showStartupAnimation: true,
   /** Beta: sync active profile to a folder (for OneDrive/Dropbox/etc.). */
   profileFolderSync: { ...nebulaFolderSync.DEFAULT_PROFILE_FOLDER_SYNC },
+  /** Beta: unpacked extension paths per browsing profile (Step 1: storage + UI only). */
+  profileExtensions: { ...nebulaExtensionsSettings.DEFAULT_PROFILE_EXTENSIONS },
 };
 
 /** Allowlisted ids for `nebula-vpn-helper-open-app` (must match renderer catalog). */
@@ -1692,6 +1716,7 @@ function normalizeSettings(s) {
       o.showStartupAnimation = DEFAULT_SETTINGS.showStartupAnimation;
     }
     o.profileFolderSync = nebulaFolderSync.normalizeProfileFolderSync(o.profileFolderSync, o.activeProfileId);
+    o.profileExtensions = nebulaExtensionsSettings.normalizeProfileExtensions(o.profileExtensions);
     return o;
   }
   const layers = ["past", "local", "remote"];
@@ -1737,6 +1762,7 @@ function normalizeSettings(s) {
     o.showStartupAnimation = DEFAULT_SETTINGS.showStartupAnimation;
   }
   o.profileFolderSync = nebulaFolderSync.normalizeProfileFolderSync(o.profileFolderSync, o.activeProfileId);
+  o.profileExtensions = nebulaExtensionsSettings.normalizeProfileExtensions(o.profileExtensions);
   return o;
 }
 
@@ -1823,7 +1849,7 @@ function saveSettings(settings) {
 
 ipcMain.handle("nebula-get-settings", () => augmentSettingsForRenderer(loadSettings()));
 
-ipcMain.handle("nebula-set-settings", (_e, patch) => {
+ipcMain.handle("nebula-set-settings", async (_e, patch) => {
   if (!patch || typeof patch !== "object") return augmentSettingsForRenderer(loadSettings());
   const cur = loadSettings();
   const replaceKeyboardShortcuts = Object.prototype.hasOwnProperty.call(patch, "keyboardShortcuts");
@@ -1842,9 +1868,23 @@ ipcMain.handle("nebula-set-settings", (_e, patch) => {
   }
   const bp = browsingPersistPartitionForProfileId(next.activeProfileId);
   const ip = incognitoMemoryPartitionForProfileId(next.activeProfileId);
-  nebulaAdblock.applyAdblockFromSettings(next, bp);
-  nebulaAdblock.applyAdblockFromSettings(next, ip);
+  applyAdblockForActiveProfile(next);
   void applyWebProfileProxyFromSettings(next, bp, ip).catch((e) => console.warn("[Nebula] proxy apply:", e?.message || e));
+  const profileIdChanged =
+    patch &&
+    Object.prototype.hasOwnProperty.call(patch, "activeProfileId") &&
+    sanitizeProfileId(cur.activeProfileId) !== sanitizeProfileId(next.activeProfileId);
+  const extensionsPatched = patch && Object.prototype.hasOwnProperty.call(patch, "profileExtensions");
+  if (extensionsPatched || profileIdChanged) {
+    try {
+      attachExtensionSessionListeners(bp);
+      await nebulaExtensionsLoader.syncProfileExtensionsOnSession(session, bp, next, next.activeProfileId);
+      applyAdblockForBrowsingProfile(next, next.activeProfileId);
+      notifyExtensionsChangedForActiveProfile();
+    } catch (e) {
+      console.warn("[Nebula] extensions sync:", e?.message || e);
+    }
+  }
   if (patch && typeof patch === "object" && Object.prototype.hasOwnProperty.call(patch, "keyboardShortcuts")) {
     try {
       registerAppMenu();
@@ -5155,6 +5195,37 @@ ipcMain.handle("nebula-profile-folder-sync-open-folder", async (_e, payload) => 
   }
 });
 
+/** —— Browser extensions (beta): pick unpacked folder + read manifest (Step 1: no load from settings) */
+
+ipcMain.handle("nebula-extensions-pick-unpacked", async (event) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  const result = await dialog.showOpenDialog(win || undefined, {
+    title: "Select unpacked extension folder",
+    properties: ["openDirectory"],
+  });
+  if (result.canceled || !result.filePaths?.length) return { ok: false, canceled: true };
+  const meta = nebulaExtensionsSettings.readUnpackedExtensionMeta(result.filePaths[0]);
+  if (!meta.ok) return meta;
+  return { ok: true, ...meta };
+});
+
+ipcMain.handle("nebula-extensions-read-manifest", (_e, payload) => {
+  const extPath = typeof payload?.path === "string" ? payload.path.trim() : "";
+  if (!extPath) return { ok: false, error: "no_path" };
+  return nebulaExtensionsSettings.readUnpackedExtensionMeta(extPath);
+});
+
+ipcMain.handle("nebula-extensions-open-folder", async (_e, payload) => {
+  const extPath = typeof payload?.path === "string" ? payload.path.trim() : "";
+  if (!extPath) return { ok: false };
+  try {
+    const err = await shell.openPath(extPath);
+    return err ? { ok: false, error: err } : { ok: true };
+  } catch (e) {
+    return { ok: false, error: String(e?.message || e) };
+  }
+});
+
 /** —— Permission prompts (camera / mic / location ask) */
 
 let permissionPromptSeq = 0;
@@ -5333,6 +5404,60 @@ ipcMain.handle("nebula-get-app-info", () => ({
   name: app.getName(),
   version: app.getVersion(),
 }));
+
+ipcMain.handle("nebula-extension-spike-status", () => nebulaExtensionSpike.getExtensionSpikeStatus());
+
+ipcMain.handle("nebula-extensions-sync-status", async (_e, payload) => {
+  const partition =
+    typeof payload?.partition === "string" && payload.partition.trim()
+      ? payload.partition.trim()
+      : browsingPersistPartitionForProfileId(loadSettings().activeProfileId);
+  const sync = nebulaExtensionsLoader.getExtensionsSyncStatus(partition);
+  const settings = loadSettings();
+  const state = nebulaExtensionsSettings.getProfileExtensionsState(settings, settings.activeProfileId);
+  let sessionExtensions = [];
+  let sessionExtensionDetails = [];
+  try {
+    sessionExtensions = await nebulaExtensionsLoader.listSessionExtensionsForPartition(session, partition);
+    sessionExtensionDetails = await nebulaExtensionsLoader.listSessionExtensionDetails(session, partition);
+  } catch {
+    sessionExtensions = [];
+    sessionExtensionDetails = [];
+  }
+  const conflicts = nebulaExtensionsConflicts.getExtensionsConflictReport(
+    settings,
+    settings.activeProfileId,
+    sessionExtensionDetails.map((ext) => ({
+      extensionId: ext.id,
+      name: ext.name,
+      manifest: ext.manifest,
+    }))
+  );
+  return {
+    partition,
+    profileId: settings.activeProfileId,
+    settings: state,
+    sync: sync || null,
+    sessionExtensions,
+    conflicts,
+  };
+});
+
+ipcMain.handle("nebula-extensions-toolbar-actions", async () => {
+  const settings = loadSettings();
+  const partition = browsingPersistPartitionForProfileId(settings.activeProfileId);
+  try {
+    const actions = await nebulaExtensionsUi.listToolbarActionsForPartition(
+      session,
+      partition,
+      settings,
+      settings.activeProfileId
+    );
+    return { ok: true, partition, actions };
+  } catch (err) {
+    return { ok: false, error: String(err?.message || err), actions: [] };
+  }
+});
 
 /** Same folder as index.html — avoids fetch() failing on file:// in the shell UI. */
 ipcMain.handle("nebula-get-changelog", () => {
@@ -5856,6 +5981,22 @@ function saveWindowState(win) {
   }
 }
 
+/** Partitions that already have extension session listeners attached. */
+const extensionSessionListenerPartitions = new Set();
+
+function attachExtensionSessionListeners(partition) {
+  if (!partition || extensionSessionListenerPartitions.has(partition)) return;
+  extensionSessionListenerPartitions.add(partition);
+  const s = session.fromPartition(partition);
+  const notify = () => broadcastToAllWindows("nebula-extensions-changed", {});
+  s.on("extension-loaded", notify);
+  s.on("extension-unloaded", notify);
+}
+
+async function notifyExtensionsChangedForActiveProfile() {
+  broadcastToAllWindows("nebula-extensions-changed", {});
+}
+
 function dispatchAction(browserWindow, action) {
   const win = browserWindow || BrowserWindow.getFocusedWindow();
   if (win && !win.isDestroyed()) win.webContents.send("nebula-action", action);
@@ -6185,9 +6326,20 @@ app.whenReady().then(async () => {
   attachDownloadHandlers(session.fromPartition(incognitoPart));
   await nebulaAdblock.initAdblockEngine(browsingPart, loadSettings);
   nebulaAdblock.ensureCosmeticPreloadForGuestPartition(incognitoPart);
-  nebulaAdblock.applyAdblockFromSettings(startupSettings, incognitoPart);
   installGuestLoginSessionPreloadForPartition(browsingPart);
   installGuestLoginSessionPreloadForPartition(incognitoPart);
+  attachExtensionSessionListeners(browsingPart);
+
+  await nebulaExtensionSpike.maybeLoadExtensionSpike(session, browsingPart);
+
+  await nebulaExtensionsLoader.syncProfileExtensionsOnSession(
+    session,
+    browsingPart,
+    startupSettings,
+    startupSettings.activeProfileId
+  );
+  applyAdblockForActiveProfile(startupSettings);
+  notifyExtensionsChangedForActiveProfile();
 
   createWindow();
 

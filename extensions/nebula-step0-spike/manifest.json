@@ -1,0 +1,13 @@
+{
+  "manifest_version": 3,
+  "name": "Nebula Extension Spike",
+  "version": "0.0.1",
+  "description": "Step 0 dev test: content script badge proves extensions run in Nebula webview tabs.",
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

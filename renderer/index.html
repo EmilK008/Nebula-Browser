@@ -172,6 +172,9 @@
               </svg>
             </button>
           </div>
+          <div id="extension-toolbar-wrap" class="extension-toolbar-wrap" hidden aria-hidden="true">
+            <div id="extension-toolbar-strip" class="extension-toolbar-strip" role="toolbar" aria-label="Extension actions"></div>
+          </div>
         </nav>
         <form class="omnibox-wrap" id="no-drag">
           <div class="omnibox">
@@ -228,6 +231,20 @@
             </svg>
           </button>
         </div>
+      </div>
+      <div id="extension-popup-panel" class="extension-popup-panel" hidden aria-hidden="true">
+        <div class="extension-popup-header">
+          <span id="extension-popup-title" class="extension-popup-title">Extension</span>
+          <button type="button" class="extension-popup-close" id="extension-popup-close" title="Close" aria-label="Close extension popup">
+            ✕
+          </button>
+        </div>
+        <webview
+          id="extension-popup-webview"
+          class="extension-popup-webview"
+          partition="persist:nebula"
+          allowpopups="true"
+        ></webview>
       </div>
       <div class="bookmarks-bar" id="bookmarks-bar" hidden></div>
       <div class="tabs-row" id="no-drag">
@@ -1223,7 +1240,7 @@
                 <button type="button" class="settings-action-btn" id="settings-bookmarks-export-json">Export JSON…</button>
               </div>
             </section>
-            <section class="settings-section" data-settings-category="Profiles &amp; private tabs" data-settings-keywords="profiles,private,incognito,tabs,cookies,session,export,import,backup,sync,folder,onedrive,dropbox,cloud,beta">
+            <section class="settings-section" data-settings-category="Profiles &amp; private tabs" data-settings-keywords="profiles,private,incognito,tabs,cookies,session,export,import,backup,sync,folder,onedrive,dropbox,cloud,extensions,chrome,unpacked,manifest,beta">
               <h3 class="settings-section-title">Profiles &amp; private tabs</h3>
               <p class="settings-hint">
                 <strong>Profiles</strong> use separate cookies, saved sessions, <strong>bookmarks</strong>, and <strong>history</strong> (each profile has its own bar, address suggestions, and local storage keys). Switch profile below, click Save, and Nebula will restart automatically. Default migrates your previous global bookmarks and history the first time they load.
@@ -1270,6 +1287,29 @@
                 <button type="button" class="settings-save-btn" id="settings-folder-sync-now">Sync now</button>
               </div>
               <p id="settings-folder-sync-status" class="settings-hint" role="status"></p>
+              <div class="settings-subsection-label">
+                Browser extensions <span class="settings-beta-badge">Beta</span>
+              </div>
+              <p class="settings-hint">
+                Add unpacked Chrome extensions for the <strong>active profile</strong>. Enabled extensions load on this
+                profile’s browsing session at startup and when you change the list. Icons with popups appear in the toolbar;
+                right-click an icon for options. You can pause Nebula adblock for this profile if you use an extension ad blocker.
+                Normal tabs reload when you change the list. Private tabs do not load extensions.
+              </p>
+              <label class="settings-checkbox-row" id="settings-extensions-enable-wrap">
+                <input type="checkbox" id="settings-extensions-enabled" />
+                <span id="settings-extensions-enable-label">Enable extensions for this profile</span>
+              </label>
+              <label class="settings-checkbox-row" id="settings-extensions-pause-adblock-wrap">
+                <input type="checkbox" id="settings-extensions-pause-adblock" />
+                <span>Pause Nebula adblock while extensions are enabled for this profile</span>
+              </label>
+              <p id="settings-extensions-conflicts" class="settings-hint settings-extensions-conflicts" hidden role="status"></p>
+              <ul id="settings-extensions-list" class="settings-extensions-list" aria-label="Unpacked extensions"></ul>
+              <div class="settings-bookmarks-row">
+                <button type="button" class="settings-action-btn" id="settings-extensions-add">Load unpacked…</button>
+              </div>
+              <p id="settings-extensions-status" class="settings-hint" role="status"></p>
               <div class="settings-bookmarks-row">
                 <button type="button" class="settings-action-btn" id="settings-profile-add">Add profile…</button>
                 <button type="button" class="settings-action-btn" id="settings-profile-remove">Remove selected</button>
